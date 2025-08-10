@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Small design tokens used across the app */
+@layer utilities {
+  .bg-mesh-light {
+    background:
+      radial-gradient(40% 30% at 20% 20%, rgba(99,102,241,0.10), transparent 60%),
+      radial-gradient(40% 30% at 80% 0%, rgba(14,165,233,0.12), transparent 60%),
+      radial-gradient(40% 30% at 50% 100%, rgba(236,72,153,0.08), transparent 60%),
+      #f8fafc;
+  }
+  .animate-fade-in {
+    animation: fade-in .35s ease both;
+  }
+  @keyframes fade-in { from {opacity:0; transform: translateY(4px)} to {opacity:1; transform:none} }
+
+  .pill {
+    @apply inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition;
+  }
+  .card {
+    @apply rounded-2xl border border-slate-200 bg-white shadow-sm;
+  }
+}
+
+/* Nice focus outline on all focusable elements */
+:root {
+  --ring: 0 0% 0%;
+}
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px hsl(var(--ring) / .12), 0 0 0 1px hsl(var(--ring) / .22);
+}
