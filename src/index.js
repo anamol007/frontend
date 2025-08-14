@@ -1,35 +1,16 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-
+import App from './App';
 import './styles/index.css';
+import ErrorBoundary from './components/ErrorBoundary';
+import { setAuth, getToken } from './utils/api'; // ✅ use existing exports
 
-import ProtectedRoute from './routes/ProtectedRoute';
-import Login from './pages/Login';
-import DashboardLayout from './components/DashboardLayout';
+// Load token (from localStorage or your api helper) and attach to axios
+const token = (typeof getToken === 'function' ? getToken() : localStorage.getItem('token'));
+if (token) setAuth(token);
 
-function App() {
-  return (
-    <Router>
-      <Routes>
-        {/* Public */}
-        <Route path="/login" element={<Login />} />
-
-        {/* Private: /dashboard/* */}
-        <Route
-          path="/dashboard/*"
-          element={
-            <ProtectedRoute>
-              <DashboardLayout />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </Router>
-  );
-}
-
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);

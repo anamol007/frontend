@@ -1,171 +1,535 @@
+// src/pages/StockPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
-import { Boxes, Package, MapPinned, AlertTriangle, Plus, Edit, Trash2, RefreshCw, X, Search, SlidersHorizontal } from 'lucide-react';
-import { API_URL, authHeaders as h, Field } from '../utils/api';
+import {
+  Search, RefreshCw, Plus, Pencil, Trash2, X, Info, AlertTriangle
+} from 'lucide-react';
+import { api } from '../utils/api';
 
-const roleOK = (a)=>{ const r=(JSON.parse(localStorage.getItem('auth_user')||'{}')?.role||'').toLowerCase(); if(a==='delete')return r==='superadmin'; if(a==='edit'||a==='create')return r==='admin'||r==='superadmin'; return true; };
+// ---------- Helpers ----------
+const byText = (a, b) => String(a).localeCompare(String(b));
+const safeArr = (x) => (Array.isArray(x) ? x : []);
+const getList = (r) => (r && r.data && (r.data.data ?? r.data)) || [];
+const toNum = (v) => (typeof v === 'number' ? v : Number(v || 0));
 
-export default function StockPage(){
-  const [rows,setRows]=useState([]); const [loading,setLoading]=useState(true);
-  const [err,setErr]=useState(''); const [notice,setNotice]=useState('');
-  const [showCreate,setShowCreate]=useState(false); const [showEdit,setShowEdit]=useState(false);
-  const [saving,setSaving]=useState(false); const [editingId,setEditingId]=useState(null); const [deleting,setDeleting]=useState(null);
-  const [form,setForm]=useState({ productId:'', inventoryId:'', stockKg:'', stockBori:'' });
+// ---------- Create/Edit inline modal ----------
+function EditModal({ open, initial = {}, products = [], inventories = [], units = [], onClose, onSubmit }) {
+  const [form, setForm] = useState(initial);
+  const [busy, setBusy] = useState(false);
 
-  const [productId,setProductId]=useState(''); const [inventoryId,setInventoryId]=useState('');
-  const [lowKg,setLowKg]=useState(''); const [lowBori,setLowBori]=useState('');
-  const [q,setQ]=useState('');
+  useEffect(() => setForm(initial || {}), [initial, open]);
 
-  useEffect(()=>{ refresh(); },[]);
-  async function refresh(){
-    try{ setLoading(true); setErr('');
-      const r=await axios.get(`${API_URL}/stock`,{headers:h()});
-      const data=(r.data?.data??r.data)||[]; setRows(Array.isArray(data)?data:[]);
-    }catch(e){ setErr(e?.response?.data?.message||'Failed to load stock'); setRows([]);}
-    finally{ setLoading(false); }
-  }
+  if (!open) return null;
 
-  async function filterFetch(){
-    try{ setLoading(true); setErr('');
-      let path=`/stock`;
-      if(productId) path=`/stock/product/${productId}`;
-      else if(inventoryId) path=`/stock/inventory/${inventoryId}`;
-      const r=await axios.get(`${API_URL}${path}`,{headers:h()});
-      const data=(r.data?.data??r.data)||[]; setRows(Array.isArray(data)?data:[]);
-    }catch(e){ setErr(e?.response?.data?.message||'Filter failed'); } finally{ setLoading(false); }
-  }
-  async function lowFetch(){
-    try{ setLoading(true); setErr('');
-      const r=await axios.get(`${API_URL}/stock/low`,{headers:h(),params:{kgThreshold:lowKg||undefined, boriThreshold:lowBori||undefined}});
-      const data=(r.data?.data??r.data)||[]; setRows(Array.isArray(data)?data:[]);
-    }catch(e){ setErr(e?.response?.data?.message||'Low-stock query failed'); } finally{ setLoading(false); }
-  }
-
-  function openCreate(){ setForm({productId:'',inventoryId:'',stockKg:'',stockBori:''}); setShowCreate(true); }
-  function openEdit(r){ setEditingId(r.id); setForm({productId:r.productId||r.product_id||'', inventoryId:r.inventoryId||r.inventory_id||'', stockKg:r.stockKg||r.stock_kg||'', stockBori:r.stockBori||r.stock_bori||''}); setShowEdit(true); }
-  const payload=f=>({ productId:Number(f.productId)||undefined, product_id:Number(f.productId)||undefined, inventoryId:Number(f.inventoryId)||undefined, inventory_id:Number(f.inventoryId)||undefined, stockKg: Number(f.stockKg)||0, stockBori: Number(f.stockBori)||0, stock_kg:Number(f.stockKg)||undefined, stock_bori:Number(f.stockBori)||undefined });
-
-  async function onCreate(e){ e.preventDefault(); try{ setSaving(true); setErr(''); setNotice('');
-    await axios.post(`${API_URL}/stock`, payload(form), {headers:h()}); setShowCreate(false); await refresh(); setNotice('Stock record created.');
-  }catch(e){ setErr(e?.response?.data?.message||'Create failed'); } finally{ setSaving(false); } }
-  async function onEdit(e){ e.preventDefault(); try{ setSaving(true); setErr(''); setNotice('');
-    await axios.put(`${API_URL}/stock/${editingId}`, payload(form), {headers:h()}); setShowEdit(false); setEditingId(null); await refresh(); setNotice('Stock updated.');
-  }catch(e){ setErr(e?.response?.data?.message||'Update failed'); } finally{ setSaving(false); } }
-  async function onDelete(id){ if(!window.confirm('Delete stock record?'))return;
-    try{ setDeleting(id); setErr(''); setNotice('');
-      await axios.delete(`${API_URL}/stock/${id}`,{headers:h()}); await refresh(); setNotice('Stock deleted.');
-    }catch(e){ setErr(e?.response?.data?.message||'Delete failed'); } finally{ setDeleting(null); } }
-
-  const filtered = useMemo(()=> rows.filter(r => JSON.stringify(r).toLowerCase().includes(q.trim().toLowerCase())),[rows,q]);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Only allowed fields per Swagger
+      const payload = {
+        stockQuantity: form.stockQuantity,
+        unit: form.unit,
+        product_id: form.product_id,
+        inventory_id: form.inventory_id,
+      };
+      await onSubmit(payload);
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="animate-fade-in">
-      <Header title="Stock" subtitle="Inventory quantities." onRefresh={refresh} onCreate={roleOK('create')?openCreate:null}/>
-
-      {err && <Banner kind="error">{err}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
-
-      <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center">
-        <div className="flex gap-2">
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input placeholder="Find in table…" value={q} onChange={e=>setQ(e.target.value)}
-                   className="w-56 rounded-2xl border border-slate-200 bg-white/80 pl-9 pr-3 py-2 text-sm backdrop-blur"/>
-          </div>
-          <button onClick={filterFetch} className="pill bg-slate-900/90 text-white hover:bg-slate-900"><SlidersHorizontal size={14}/> Apply Filters</button>
+    <div className="fixed inset-0 z-[70]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[620px] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/30 bg-white/85 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+        <div className="flex items-center justify-between rounded-t-3xl bg-gradient-to-br from-slate-900 to-slate-800 px-5 py-4 text-white">
+          <div className="font-semibold">{initial?.id ? 'Edit Stock' : 'New Stock'}</div>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10"><X size={18} /></button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Field label="Product ID"><input value={productId} onChange={e=>setProductId(e.target.value)} className="w-28 rounded-xl border border-slate-200 px-2 py-1.5"/></Field>
-          <Field label="Inventory ID"><input value={inventoryId} onChange={e=>setInventoryId(e.target.value)} className="w-28 rounded-xl border border-slate-200 px-2 py-1.5"/></Field>
-          <div className="mx-2 h-6 w-px bg-slate-200 hidden lg:block"/>
-          <Field label="Low kg"><input value={lowKg} onChange={e=>setLowKg(e.target.value)} className="w-24 rounded-xl border border-slate-200 px-2 py-1.5"/></Field>
-          <Field label="Low bori"><input value={lowBori} onChange={e=>setLowBori(e.target.value)} className="w-24 rounded-xl border border-slate-200 px-2 py-1.5"/></Field>
-          <button onClick={lowFetch} className="pill bg-gradient-to-r from-rose-600 to-red-600 text-white hover:from-rose-700 hover:to-red-700"><AlertTriangle size={14}/> Low Stock</button>
-        </div>
-      </div>
 
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white/80 backdrop-blur">
-        {loading ? <Loading/> : filtered.length===0 ? <Empty text="No stock records."/> : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80 text-slate-600">
-                <tr>
-                  <th className="px-4 py-2 text-left">ID</th>
-                  <th className="px-4 py-2 text-left">Product</th>
-                  <th className="px-4 py-2 text-left">Inventory</th>
-                  <th className="px-4 py-2 text-left">Kg</th>
-                  <th className="px-4 py-2 text-left">Bori</th>
-                  <th className="px-4 py-2 text-left w-44">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map(r=>(
-                  <tr key={r.id} className="hover:bg-white/60">
-                    <td className="px-4 py-2">{r.id}</td>
-                    <td className="px-4 py-2 inline-flex items-center gap-2"><Package size={14}/>{r.productId||r.product_id}</td>
-                    <td className="px-4 py-2 inline-flex items-center gap-2"><MapPinned size={14}/>{r.inventoryId||r.inventory_id}</td>
-                    <td className="px-4 py-2">{r.stockKg??r.stock_kg??'—'}</td>
-                    <td className="px-4 py-2">{r.stockBori??r.stock_bori??'—'}</td>
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-2">
-                        {roleOK('edit')   && <button onClick={()=>openEdit(r)} className="px-2.5 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-1.5"><Edit size={14}/> Edit</button>}
-                        {roleOK('delete') && <button onClick={()=>onDelete(r.id)} disabled={deleting===r.id} className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 inline-flex items-center gap-1.5 disabled:opacity-60"><Trash2 size={14}/> {deleting===r.id?'Deleting…':'Delete'}</button>}
-                      </div>
-                    </td>
-                  </tr>
+        <form onSubmit={submit} className="p-5 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">Product *</label>
+              <select
+                required
+                value={form.product_id ?? ''}
+                onChange={(e) => setForm((p) => ({ ...p, product_id: Number(e.target.value) || '' }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="" disabled>Select product…</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>{p.productName}</option>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </select>
+            </div>
 
-      {showCreate && <StockModal title="Create Stock" form={form} setForm={setForm} onCancel={()=>setShowCreate(false)} onSubmit={onCreate} saving={saving}/>}
-      {showEdit   && <StockModal title="Edit Stock"   form={form} setForm={setForm} onCancel={()=>{setShowEdit(false); setEditingId(null);}} onSubmit={onEdit} saving={saving}/>}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">Inventory *</label>
+              <select
+                required
+                value={form.inventory_id ?? ''}
+                onChange={(e) => setForm((p) => ({ ...p, inventory_id: Number(e.target.value) || '' }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="" disabled>Select inventory…</option>
+                {inventories.map((i) => (
+                  <option key={i.id} value={i.id}>{i.inventoryName}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">Quantity *</label>
+              <input
+                required
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.stockQuantity ?? ''}
+                onChange={(e) => setForm((p) => ({ ...p, stockQuantity: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-600">Unit *</label>
+              <select
+                required
+                value={form.unit ?? ''}
+                onChange={(e) => setForm((p) => ({ ...p, unit: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              >
+                <option value="" disabled>Select unit…</option>
+                {units.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
+            <button type="submit" disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60">
+              {busy ? 'Saving…' : (initial?.id ? 'Save Changes' : 'Create')}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
 
-const Header = ({title,subtitle,onRefresh,onCreate}) => (
-  <div className="mb-6 relative overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-5">
-    <div className="pointer-events-none absolute -top-10 -right-10 h-40 w-40 rounded-full bg-gradient-to-tr from-emerald-400/30 to-cyan-400/30 blur-2xl" />
-    <div className="flex items-end justify-between">
-      <div><h1 className="text-3xl font-extrabold tracking-tight text-slate-900">{title}</h1><p className="text-slate-500 text-sm">{subtitle}</p></div>
-      <div className="flex gap-2">
-        <button onClick={onRefresh} className="pill bg-slate-900/90 text-white hover:bg-slate-900"><RefreshCw size={14}/> Refresh</button>
-        {onCreate && <button onClick={onCreate} className="pill bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-700 hover:to-cyan-700"><Plus size={16}/> New</button>}
+// ---------- Low Stock popup ----------
+function LowStockPopup({ open, onClose, onFetch, rows, busy }) {
+  const [threshold, setThreshold] = useState(10);
+
+  useEffect(() => {
+    if (!open) return;
+    // Reset when reopened
+    setThreshold(10);
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[720px] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/30 bg-white/85 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+        <div className="flex items-center justify-between rounded-t-3xl bg-gradient-to-br from-amber-600 to-rose-600 px-5 py-4 text-white">
+          <div className="flex items-center gap-2 font-semibold"><AlertTriangle size={18}/> Low Stock</div>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10"><X size={18} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="flex items-end gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-600">Threshold</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={threshold}
+                onChange={(e) => setThreshold(Number(e.target.value) || 0)}
+                className="w-32 rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              />
+            </div>
+            <button
+              onClick={() => onFetch({ threshold })}
+              disabled={busy}
+              className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              {busy ? 'Loading…' : 'Apply'}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3">
+            {!rows || rows.length === 0 ? (
+              <div className="text-sm text-slate-400">No low stock items.</div>
+            ) : (
+              <div className="max-h-[42vh] space-y-2 overflow-auto pr-1">
+                {rows.map((r) => {
+                  const productName =
+                    r?.product?.productName ??
+                    r?.Product?.productName ??
+                    r?.productName ??
+                    (r?.productId != null ? `#${r.productId}` : '—');
+                  const invName =
+                    r?.inventory?.inventoryName ??
+                    r?.Inventory?.inventoryName ??
+                    r?.inventoryName ??
+                    (r?.inventoryId != null ? `#${r.inventoryId}` : '—');
+                  const qty = toNum(r?.stockQuantity);
+                  const unit = String(r?.unit?.name ?? r?.unit ?? '—').toUpperCase();
+                  return (
+                    <div key={r?.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800">{productName}</div>
+                        <div className="text-xs text-slate-400">{invName}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-lg bg-slate-900 px-2 py-1 text-xs font-semibold text-white tabular-nums">{qty}</span>
+                        <span className="text-xs text-slate-600">{unit}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 rounded-b-3xl border-t border-white/60 bg-white/70 px-5 py-3">
+          <button onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Close</button>
+        </div>
       </div>
     </div>
-  </div>
-);
-const Banner=({kind,children})=>(<div className={`mb-3 rounded-xl border px-4 py-3 ${kind==='error'?'border-rose-200 bg-rose-50 text-rose-700':'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{children}</div>);
-const Loading=()=> (<div className="flex items-center justify-center py-16 text-slate-500"><div className="h-5 w-5 mr-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"/> Loading…</div>);
-const Empty=({text})=> (<div className="p-10 text-center text-slate-600">{text}</div>);
+  );
+}
 
-function StockModal({title,form,setForm,onCancel,onSubmit,saving}){
+// ---------- Main ----------
+export default function StockPage() {
+  // data
+  const [rows, setRows] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [inventories, setInventories] = useState([]);
+  const [units, setUnits] = useState([]);
+
+  // ui state
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+  const [q, setQ] = useState('');
+  const [productFilter, setProductFilter] = useState('');
+  const [inventoryFilter, setInventoryFilter] = useState('');
+
+  // modals
+  const [editOpen, setEditOpen] = useState(false);
+  const [editRow, setEditRow] = useState(null);
+
+  const [lowOpen, setLowOpen] = useState(false);
+  const [lowBusy, setLowBusy] = useState(false);
+  const [lowRows, setLowRows] = useState([]);
+
+  // ---------- loaders ----------
+  async function loadLists() {
+    setErr(''); setOk('');
+    try {
+      const [s, p, i, u] = await Promise.allSettled([
+        api.get('/stock/'),
+        api.get('/products/'),
+        api.get('/inventory/'),
+        api.get('/units/'),
+      ]);
+
+      // stock
+      if (s.status === 'fulfilled') {
+        const data = safeArr(getList(s.value));
+        // sort by product then inventory
+        data.sort((a, b) => {
+          const ap = a?.product?.productName ?? a?.Product?.productName ?? a?.productName ?? '';
+          const bp = b?.product?.productName ?? b?.Product?.productName ?? b?.productName ?? '';
+          const ai = a?.inventory?.inventoryName ?? a?.Inventory?.inventoryName ?? a?.inventoryName ?? '';
+          const bi = b?.inventory?.inventoryName ?? b?.Inventory?.inventoryName ?? b?.inventoryName ?? '';
+          return byText(ap, bp) || byText(ai, bi);
+        });
+        setRows(data);
+      } else {
+        setErr(s.reason?.response?.data?.message || s.reason?.message || 'Failed to load stock');
+      }
+
+      // products
+      if (p.status === 'fulfilled') {
+        const list = safeArr(getList(p.value))
+          .map((x) => ({ id: x.id, productName: x.productName }))
+          .sort((a, b) => byText(a.productName, b.productName));
+        setProducts(list);
+      }
+
+      // inventories
+      if (i.status === 'fulfilled') {
+        const list = safeArr(getList(i.value))
+          .map((x) => ({ id: x.id, inventoryName: x.inventoryName }))
+          .sort((a, b) => byText(a.inventoryName, b.inventoryName));
+        setInventories(list);
+      }
+
+      // units (fallback to KG, BORI if empty)
+      if (u.status === 'fulfilled') {
+        const list = safeArr(getList(u.value))
+          .map((x) => x?.name)
+          .filter(Boolean)
+          .sort(byText);
+        setUnits(list.length ? list : ['KG', 'BORI']);
+      } else {
+        setUnits(['KG', 'BORI']);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLists();
+  }, []);
+
+  // ---------- filters / search ----------
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return rows.filter((r) => {
+      const productName =
+        r?.product?.productName ??
+        r?.Product?.productName ??
+        r?.productName ?? '';
+
+      const invName =
+        r?.inventory?.inventoryName ??
+        r?.Inventory?.inventoryName ??
+        r?.inventoryName ?? '';
+
+      const matchesSearch =
+        !s ||
+        productName.toLowerCase().includes(s) ||
+        invName.toLowerCase().includes(s) ||
+        String(r?.unit ?? '').toLowerCase().includes(s);
+
+      const matchesProduct = !productFilter || Number(productFilter) === Number(r?.productId ?? r?.product_id ?? r?.product?.id ?? r?.Product?.id);
+      const matchesInventory = !inventoryFilter || Number(inventoryFilter) === Number(r?.inventoryId ?? r?.inventory_id ?? r?.inventory?.id ?? r?.Inventory?.id);
+
+      return matchesSearch && matchesProduct && matchesInventory;
+    });
+  }, [rows, q, productFilter, inventoryFilter]);
+
+  // ---------- CRUD ----------
+  const openCreate = () => { setEditRow(null); setEditOpen(true); };
+  const openEdit = (row) => {
+    // normalize initial data to payload shape
+    const product_id = row?.productId ?? row?.product_id ?? row?.product?.id ?? row?.Product?.id ?? '';
+    const inventory_id = row?.inventoryId ?? row?.inventory_id ?? row?.inventory?.id ?? row?.Inventory?.id ?? '';
+    setEditRow({
+      id: row?.id,
+      product_id,
+      inventory_id,
+      stockQuantity: row?.stockQuantity ?? '',
+      unit: typeof row?.unit === 'object' ? (row?.unit?.name ?? '') : (row?.unit ?? ''),
+    });
+    setEditOpen(true);
+  };
+
+  async function handleSubmit(payload) {
+    try {
+      if (editRow?.id) {
+        await api.put(`/stock/${editRow.id}`, payload);
+        setOk('Stock updated');
+      } else {
+        await api.post('/stock/', payload);
+        setOk('Stock created');
+      }
+      setEditOpen(false);
+      setEditRow(null);
+      await loadLists();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Save failed');
+    }
+  }
+
+  async function handleDelete(row) {
+    if (!window.confirm('Delete this stock record?')) return;
+    setErr(''); setOk('');
+    try {
+      await api.delete(`/stock/${row.id}`);
+      setOk('Stock deleted');
+      await loadLists();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
+    }
+  }
+
+  // ---------- Low stock ----------
+  async function fetchLow({ threshold }) {
+    setLowBusy(true);
+    try {
+      const r = await api.get('/stock/low', { params: { threshold } });
+      const list = safeArr(getList(r));
+      setLowRows(list);
+    } finally {
+      setLowBusy(false);
+    }
+  }
+
+  // ---------- UI ----------
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 backdrop-blur shadow-sm">
-        <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-gradient-to-tr from-emerald-400/20 to-cyan-400/20 blur-2xl" />
-        <div className="flex items-center justify-between p-4 border-b border-slate-100">
-          <div className="text-lg font-semibold">{title}</div>
-          <button className="p-1 hover:opacity-70" onClick={onCancel}><X size={18}/></button>
+    <div className="space-y-5">
+      {/* header */}
+      <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">Stock</h1>
+            <p className="text-sm text-slate-500">Manage stock by product & inventory. Create, edit, delete, and check low stock.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
+              <Search size={16} className="text-slate-400" />
+              <input
+                value={q}
+                onChange={(e)=> setQ(e.target.value)}
+                placeholder="Search product, inventory, unit…"
+                className="w-64 bg-transparent outline-none text-sm"
+              />
+            </div>
+
+            <select
+              value={productFilter}
+              onChange={(e)=> setProductFilter(e.target.value)}
+              className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
+            >
+              <option value="">All products</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.productName}</option>)}
+            </select>
+
+            <select
+              value={inventoryFilter}
+              onChange={(e)=> setInventoryFilter(e.target.value)}
+              className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
+            >
+              <option value="">All inventories</option>
+              {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName}</option>)}
+            </select>
+
+            <button
+              onClick={() => { setLowRows([]); setLowOpen(true); }}
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 hover:bg-amber-100"
+            >
+              <Info size={16}/> Low stock
+            </button>
+
+            <button
+              onClick={loadLists}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <RefreshCw size={16} /> Refresh
+            </button>
+
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+            >
+              <Plus size={16} /> New Stock
+            </button>
+          </div>
         </div>
-        <form onSubmit={onSubmit} className="p-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Product ID" required><input type="number" className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.productId} onChange={e=>setForm({...form,productId:e.target.value})} required/></Field>
-            <Field label="Inventory ID" required><input type="number" className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.inventoryId} onChange={e=>setForm({...form,inventoryId:e.target.value})} required/></Field>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Stock (kg)"><input type="number" step="0.01" className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.stockKg} onChange={e=>setForm({...form,stockKg:e.target.value})}/></Field>
-            <Field label="Stock (bori)"><input type="number" step="0.01" className="w-full rounded-2xl border border-slate-200 px-3 py-2" value={form.stockBori} onChange={e=>setForm({...form,stockBori:e.target.value})}/></Field>
-          </div>
-          <div className="pt-2 flex items-center justify-end gap-2">
-            <button type="button" onClick={onCancel} className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-800 hover:bg-slate-200">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-700 hover:to-cyan-700 disabled:opacity-60">{saving?'Saving…':'Save'}</button>
-          </div>
-        </form>
+
+        {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
+        {ok  && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
       </div>
+
+      {/* cards */}
+      {loading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-36 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
+          No stock records.
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((row) => {
+            const productName =
+              row?.product?.productName ??
+              row?.Product?.productName ??
+              row?.productName ??
+              (row?.productId != null ? `#${row.productId}` : '—');
+
+            const invName =
+              row?.inventory?.inventoryName ??
+              row?.Inventory?.inventoryName ??
+              row?.inventoryName ??
+              (row?.inventoryId != null ? `#${row.inventoryId}` : '—');
+
+            const qty = toNum(row?.stockQuantity);
+            const unit = String(row?.unit?.name ?? row?.unit ?? '—').toUpperCase();
+
+            return (
+              <div
+                key={row?.id}
+                className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
+              >
+                <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
+
+                <div className="min-w-0">
+                  <div className="truncate text-base font-semibold text-slate-900">{productName}</div>
+                  <div className="mt-0.5 text-xs text-slate-500">{invName}</div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-lg bg-slate-900 px-2 py-1 text-xs font-semibold text-white tabular-nums">{qty}</span>
+                    <span className="text-xs text-slate-600">{unit}</span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEdit(row)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <Pencil size={16} /> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(row)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    >
+                      <Trash2 size={16} /> Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* inline modals */}
+      <EditModal
+        open={editOpen}
+        initial={editRow || {}}
+        products={products}
+        inventories={inventories}
+        units={units}
+        onClose={() => { setEditOpen(false); setEditRow(null); }}
+        onSubmit={handleSubmit}
+      />
+
+      <LowStockPopup
+        open={lowOpen}
+        busy={lowBusy}
+        rows={lowRows}
+        onClose={() => setLowOpen(false)}
+        onFetch={fetchLow}
+      />
     </div>
   );
 }

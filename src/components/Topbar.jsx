@@ -1,52 +1,37 @@
-import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { clearAuth, getUser } from '../utils/api';
 import { LogOut } from 'lucide-react';
 
-function decodeJwt(token) {
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
-    );
-    return JSON.parse(jsonPayload);
-  } catch { return null; }
-}
-
 export default function Topbar() {
-  const navigate = useNavigate();
-  const token = localStorage.getItem('authToken') || '';
+  const nav = useNavigate();
+  const user = getUser();
+  const email = user?.email || '—';
+  const fullname = user?.fullname || user?.name || '';
+  const initial = (fullname || email || '?').charAt(0).toUpperCase();
 
-  const { email, fullName, initial } = useMemo(() => {
-    const p = decodeJwt(token) || {};
-    const email = p.email || '';
-    const fullName = p.fullname || p.name || p.username || '';
-    const initialSource = fullName || email || 'U';
-    const initial = (initialSource.trim().charAt(0) || 'U').toUpperCase();
-    return { email, fullName, initial };
-  }, [token]);
-
-  function logout() {
-    localStorage.removeItem('authToken');
-    navigate('/login', { replace: true });
-  }
+  function logout() { clearAuth(); nav('/login', { replace: true }); }
 
   return (
-    <header className="mb-6">
-      <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur px-3 py-2 flex items-center justify-between shadow-sm">
-        <div className="text-sm text-slate-500 px-2 py-1 rounded-lg">Welcome back 👋</div>
-        <div className="flex items-center gap-3">
-          <div className="text-right leading-tight hidden sm:block">
-            <div className="text-slate-900 text-sm font-medium">{email || '—'}</div>
-            <div className="text-slate-500 text-xs">{fullName || 'User'}</div>
+    <header className="relative z-10 h-16 border-b border-slate-200 bg-white/70 backdrop-blur-xl">
+      <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-6">
+        <div className="text-sm text-slate-500">
+          <span className="font-semibold text-slate-900">Dashboard</span>
+          <span className="mx-2">•</span>
+          <span className="hidden sm:inline">Welcome back</span>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-900 text-white">{initial}</div>
+            <div className="leading-tight">
+              <div className="text-sm font-semibold text-slate-900">{email}</div>
+              <div className="text-xs text-slate-500">{fullname}</div>
+            </div>
           </div>
-          <div className="w-9 h-9 rounded-xl bg-slate-900 text-white grid place-items-center font-semibold">{initial}</div>
-          <button
-            onClick={logout}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm"
-            title="Logout"
-          >
-            <LogOut size={16}/> Logout
+
+          <button onClick={logout}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+            <LogOut size={16} /> Logout
           </button>
         </div>
       </div>

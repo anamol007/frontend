@@ -1,419 +1,505 @@
 // src/pages/ProductsPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
-import {
-  Plus, Edit, Trash2, X, Search, RefreshCw, Package, Tag, Gauge
-} from 'lucide-react';
-import { API_URL, authHeaders as h, Field } from '../utils/api';
+import { Plus, Pencil, Trash2, RefreshCw, Search, Tag, Package2, Layers, DollarSign, X, Save } from 'lucide-react';
+import { api } from '../utils/api';
 
-/* ---------------- helpers ---------------- */
-const toNum = (v) => (v === '' || v == null ? undefined : Number(v));
-const avg = (arr) => (arr.length ? arr.reduce((a,b)=>a+b,0) / arr.length : null);
+// small helpers
+const cls = (...a) => a.filter(Boolean).join(' ');
+const byAlpha = (get = (x) => x) => (a, b) => `${get(a)}`.localeCompare(`${get(b)}`, undefined, { sensitivity: 'base' });
 
-function mapProduct(raw) {
-  const p = raw || {};
-  const id = p.id ?? p.productId ?? p.product_id;
-  const name = p.productName ?? p.name ?? p.product_name ?? '';
-  const ratePerKg = p.ratePerKg ?? p.rate_per_kg ?? p.rate ?? null;
-  const ratePerBori = p.ratePerBori ?? p.rate_per_bori ?? p.pricePerBori ?? null;
-  const description = p.description ?? p.desc ?? '';
-  const category_id = p.category_id ?? p.categoryId ?? p.category?.id ?? p.categoryID ?? null;
-  const categoryName = p.category?.name ?? p.categoryName ?? p.category?.title ?? '';
-  return { id, name, ratePerKg, ratePerBori, description, category_id, categoryName, _raw: p };
-}
-function payloadFromForm(f) {
-  return {
-    productName: f.name || undefined,
-    ratePerKg: toNum(f.ratePerKg),
-    ratePerBori: toNum(f.ratePerBori),
-    description: f.description || undefined,
-    category_id: f.category_id ? Number(f.category_id) : undefined,
-  };
-}
-function chipColor(seed) {
-  // simple deterministic color choice from text
-  const palette = [
-    'bg-indigo-100 text-indigo-700',
-    'bg-fuchsia-100 text-fuchsia-700',
-    'bg-emerald-100 text-emerald-700',
-    'bg-amber-100 text-amber-700',
-    'bg-cyan-100 text-cyan-700',
-    'bg-rose-100 text-rose-700',
-    'bg-violet-100 text-violet-700',
-  ];
-  if (!seed) return palette[0];
-  let h=0; for (let i=0;i<seed.length;i++) h = (h*31 + seed.charCodeAt(i)) & 0xffffffff;
-  return palette[Math.abs(h) % palette.length];
+function Modal({ open, onClose, title, children, footer }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[min(680px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h3 className="text-lg font-semibold">{title}</h3>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X size={18} /></button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="border-t px-5 py-4">{footer}</div>}
+      </div>
+    </div>
+  );
 }
 
-/* ---------------- page ---------------- */
+function Field({ label, children }) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+// Pretty pill for a unit rate
+function RateChip({ name, rate }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs">
+      <Layers size={14} className="opacity-60" /> {name}: <span className="font-semibold">{rate}</span>
+    </span>
+  );
+}
+
 export default function ProductsPage() {
-  const [rows, setRows] = useState([]);
+  // data
+  const [products, setProducts] = useState([]);
+  const [units, setUnits] = useState([]);
   const [categories, setCategories] = useState([]);
+
+  // ui
   const [loading, setLoading] = useState(true);
-  const [apiError, setApiError] = useState('');
-  const [notice, setNotice] = useState('');
-
-  // filters
+  const [ok, setOk] = useState('');
+  const [err, setErr] = useState('');
   const [q, setQ] = useState('');
-  const [cat, setCat] = useState(''); // category id
 
-  // modals
-  const [showCreate, setShowCreate] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ name:'', ratePerKg:'', ratePerBori:'', description:'', category_id:'' });
+  // product create/edit modal
+  const [openEdit, setOpenEdit] = useState(false);
+  const [editing, setEditing] = useState(null); // product | null
+  const [form, setForm] = useState({ productName: '', description: '', category_id: '' });
 
-  useEffect(() => { fetchCats(); }, []);
-  useEffect(() => { fetchRows(); }, [cat]);
+  // for create only: initial units (array of { unit_id, rate })
+  const [initUnits, setInitUnits] = useState([]);
 
-  async function fetchCats() {
+  // unit-manager modal (per product)
+  const [openUnits, setOpenUnits] = useState(false);
+  const [unitsForProduct, setUnitsForProduct] = useState([]); // [{id, unit:{id,name}, rate}]
+  const [unitsProduct, setUnitsProduct] = useState(null); // product row
+  const [addUnitRow, setAddUnitRow] = useState({ unit_id: '', rate: '' });
+
+  // fetchers
+  async function fetchProducts() {
+    setLoading(true);
+    setErr(''); setOk('');
     try {
-      const res = await axios.get(`${API_URL}/categories`, { headers: h() });
-      const list = res.data?.data ?? res.data?.categories ?? res.data ?? [];
-      const mapped = Array.isArray(list) ? list.map(c => ({
-        id: c.id ?? c.category_id ?? c.categoryId,
-        name: c.name ?? c.title ?? c.categoryName ?? 'Unnamed',
-      })) : [];
-      setCategories(mapped.filter(c => c.id != null));
-    } catch { setCategories([]); }
-  }
-  async function fetchRows() {
-    try {
-      setLoading(true); setApiError(''); setNotice('');
-      const path = cat ? `/products/category/${cat}` : `/products`;
-      const res = await axios.get(`${API_URL}${path}`, { headers: h() });
-      const data = res.data?.data ?? res.data?.products ?? res.data ?? [];
-      const mapped = Array.isArray(data) ? data.map(mapProduct) : [];
-      setRows(mapped);
+      const res = await api.get('/products'); // returns productUnits included
+      const data = res?.data?.data ?? res?.data ?? [];
+      // sort alpha by productName
+      setProducts((Array.isArray(data) ? data : []).slice().sort(byAlpha(p => p.productName)));
     } catch (e) {
-      setApiError(e?.response?.data?.message || 'Failed to load products');
-      setRows([]);
-    } finally { setLoading(false); }
+      setErr(e?.response?.data?.message || e?.message || 'Failed to load products');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function openCreate() {
-    setForm({ name:'', ratePerKg:'', ratePerBori:'', description:'', category_id: cat || '' });
-    setShowCreate(true);
-  }
-  function openEdit(p) {
-    setEditingId(p.id);
-    setForm({
-      name: p.name || '',
-      ratePerKg: p.ratePerKg ?? '',
-      ratePerBori: p.ratePerBori ?? '',
-      description: p.description || '',
-      category_id: p.category_id || '',
-    });
-    setShowEdit(true);
+  async function fetchUnits() {
+    try {
+      const r = await api.get('/units');
+      const list = r?.data?.data ?? r?.data ?? [];
+      setUnits((Array.isArray(list) ? list : []).slice().sort(byAlpha(u => u.name)));
+    } catch (e) {
+      // ignore; create/edit will still work without units list (except rates UI)
+    }
   }
 
-  async function handleCreate(e) {
-    e.preventDefault();
+  async function fetchCategories() {
     try {
-      setSaving(true); setApiError(''); setNotice('');
-      await axios.post(`${API_URL}/products`, payloadFromForm(form), { headers: h() });
-      setShowCreate(false);
-      setNotice('Product created successfully.');
-      await fetchRows();
-    } catch (e) {
-      setApiError(e?.response?.data?.message || 'Failed to create product');
-    } finally { setSaving(false); }
-  }
-  async function handleEdit(e) {
-    e.preventDefault();
-    try {
-      setSaving(true); setApiError(''); setNotice('');
-      await axios.put(`${API_URL}/products/${editingId}`, payloadFromForm(form), { headers: h() });
-      setShowEdit(false); setEditingId(null);
-      setNotice('Product updated successfully.');
-      await fetchRows();
-    } catch (e) {
-      setApiError(e?.response?.data?.message || 'Failed to update product');
-    } finally { setSaving(false); }
-  }
-  async function handleDelete(id) {
-    if (!window.confirm('Delete this product? This action cannot be undone.')) return;
-    try {
-      setDeletingId(id); setApiError(''); setNotice('');
-      await axios.delete(`${API_URL}/products/${id}`, { headers: h() });
-      setNotice('Product deleted.');
-      await fetchRows();
-    } catch (e) {
-      setApiError(e?.response?.data?.message || 'Failed to delete product');
-    } finally { setDeletingId(null); }
+      const r = await api.get('/categories');
+      const list = r?.data?.data ?? r?.data ?? [];
+      setCategories((Array.isArray(list) ? list : []).slice().sort(byAlpha(c => c.name || c.categoryName)));
+    } catch {}
   }
 
-  // search + stats
-  const catMap = useMemo(() => Object.fromEntries(categories.map(c => [String(c.id), c.name])), [categories]);
+  useEffect(() => {
+    fetchProducts();
+    fetchUnits();
+    fetchCategories();
+  }, []);
+
+  // derived lists
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    if (!term) return rows;
-    return rows.filter(p => {
-      const bag = [
-        p.name, p.description, p.categoryName,
-        catMap[String(p.category_id || '')],
-        String(p.ratePerKg ?? ''),
-        String(p.ratePerBori ?? '')
-      ].join(' ').toLowerCase();
-      return bag.includes(term);
+    if (!term) return products;
+    return products.filter(p =>
+      (p.productName || '').toLowerCase().includes(term) ||
+      (p.description || '').toLowerCase().includes(term) ||
+      (p?.category?.name || p?.categoryName || '').toLowerCase().includes(term)
+    );
+  }, [q, products]);
+
+  // open create
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ productName: '', description: '', category_id: '' });
+    setInitUnits([]);
+    setOpenEdit(true);
+  };
+
+  // open edit
+  const openEditProduct = (p) => {
+    setEditing(p);
+    setForm({
+      productName: p.productName || '',
+      description: p.description || '',
+      category_id: p.category_id ?? p.categoryId ?? p?.category?.id ?? ''
     });
-  }, [q, rows, catMap]);
+    setInitUnits([]); // edit modal does not change units (use Manage Units)
+    setOpenEdit(true);
+  };
 
-  const stats = useMemo(() => {
-    const rkg = filtered.map(x => Number(x.ratePerKg)).filter(n => !isNaN(n));
-    const rbr = filtered.map(x => Number(x.ratePerBori)).filter(n => !isNaN(n));
-    const cats = new Set(filtered.map(x => x.category_id || x.categoryName || ''));
-    return {
-      total: filtered.length,
-      categories: cats.has('') ? cats.size - 1 : cats.size,
-      avgKg: rkg.length ? avg(rkg) : null,
-      avgBori: rbr.length ? avg(rbr) : null,
-    };
-  }, [filtered]);
+  // create/edit submit
+  async function submitProduct(e) {
+    e.preventDefault();
+    setErr(''); setOk('');
+    try {
+      const body = {
+        productName: form.productName?.trim(),
+        description: form.description?.trim(),
+        category_id: form.category_id || null
+      };
 
+      if (!editing && initUnits.length > 0) {
+        // API accepts "units" only on create
+        body.units = initUnits
+          .filter(u => u.unit_id && u.rate !== '' && !Number.isNaN(Number(u.rate)))
+          .map(u => ({ unit_id: Number(u.unit_id), rate: Number(u.rate) }));
+      }
+
+      if (editing?.id) {
+        await api.put(`/products/${editing.id}`, body);
+        setOk('Product updated');
+      } else {
+        await api.post('/products', body);
+        setOk('Product created');
+      }
+      setOpenEdit(false);
+      await fetchProducts();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Action failed');
+    }
+  }
+
+  // delete product
+  async function deleteProduct(p) {
+    if (!window.confirm(`Delete product "${p.productName}"? This cannot be undone.`)) return;
+    setErr(''); setOk('');
+    try {
+      await api.delete(`/products/${p.id}`);
+      setOk('Product deleted');
+      await fetchProducts();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
+    }
+  }
+
+  // units manager
+  async function openUnitsManager(p) {
+    setUnitsProduct(p);
+    setUnitsForProduct([]);
+    setAddUnitRow({ unit_id: '', rate: '' });
+    setOpenUnits(true);
+    try {
+      const r = await api.get(`/product-units/product/${p.id}`);
+      const list = r?.data?.data ?? r?.data ?? [];
+      setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha(x => x?.unit?.name)));
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Failed to load product units');
+    }
+  }
+
+  async function addUnitToProduct() {
+    setErr(''); setOk('');
+    try {
+      const unit_id = Number(addUnitRow.unit_id);
+      const rate = Number(addUnitRow.rate);
+      if (!unitsProduct?.id || !unit_id || Number.isNaN(rate)) return;
+      await api.post('/product-units', { product_id: unitsProduct.id, unit_id, rate });
+      // refresh
+      const r = await api.get(`/product-units/product/${unitsProduct.id}`);
+      const list = r?.data?.data ?? r?.data ?? [];
+      setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha(x => x?.unit?.name)));
+      setAddUnitRow({ unit_id: '', rate: '' });
+      setOk('Unit added');
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Add failed');
+    }
+  }
+
+  async function updateUnitRate(puId, newRate) {
+    setErr(''); setOk('');
+    try {
+      await api.put(`/product-units/${puId}`, { rate: Number(newRate) });
+      setOk('Rate updated');
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Update failed');
+    }
+  }
+
+  async function removeUnitFromProduct(puId) {
+    if (!window.confirm('Remove this unit from product?')) return;
+    setErr(''); setOk('');
+    try {
+      await api.delete(`/product-units/${puId}`);
+      setUnitsForProduct(prev => prev.filter(x => x.id !== puId));
+      setOk('Unit removed');
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
+    }
+  }
+
+  // UI
   return (
-    <div className="animate-fade-in">
-      {/* Fancy header */}
-      <div className="mb-6 relative overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-5">
-        <div className="pointer-events-none absolute -top-10 -right-10 h-40 w-40 rounded-full bg-gradient-to-tr from-indigo-400/30 to-fuchsia-400/30 blur-2xl" />
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-5">
+      {/* header */}
+      <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-fuchsia-600">
-              Products
+            <h1 className="text-2xl font-semibold text-slate-900 flex items-center gap-2">
+              <Package2 className="text-indigo-600" /> Products
             </h1>
-            <p className="text-slate-500 text-sm">Management for your catalog.</p>
+            <p className="text-sm text-slate-500">Browse, create, edit, and manage unit rates.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={fetchRows} className="pill bg-slate-900/90 text-white hover:bg-slate-900">
-              <RefreshCw size={14}/> Refresh
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
+              <Search size={16} className="text-slate-400" />
+              <input
+                value={q}
+                onChange={(e)=> setQ(e.target.value)}
+                placeholder="Search product, category…"
+                className="w-60 bg-transparent outline-none text-sm"
+              />
+            </div>
+            <button
+              onClick={fetchProducts}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <RefreshCw size={16} /> Refresh
             </button>
-            <button onClick={openCreate} className="pill bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white hover:from-indigo-700 hover:to-fuchsia-700 shadow-sm">
-              <Plus size={16}/> New Product
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+            >
+              <Plus size={16} /> New Product
             </button>
           </div>
         </div>
-
-        {/* quick stats */}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard icon={Package} label="Total" value={stats.total} hue="from-indigo-500 to-sky-500" />
-          <StatCard icon={Tag} label="Categories" value={stats.categories} hue="from-fuchsia-500 to-pink-500" />
-          <StatCard icon={Gauge} label="Avg / Kg" value={stats.avgKg?.toFixed(2) ?? '—'} hue="from-emerald-500 to-cyan-500" />
-          <StatCard icon={Gauge} label="Avg / Bori" value={stats.avgBori?.toFixed(2) ?? '—'} hue="from-amber-500 to-orange-500" />
-        </div>
+        {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
+        {ok  && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
       </div>
 
-      {/* Alerts */}
-      {apiError && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-700">{apiError}</div>}
-      {notice && <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-700">{notice}</div>}
-
-      {/* Filters bar */}
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative w-full sm:w-80">
-          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            placeholder="Search products…"
-            value={q}
-            onChange={(e)=>setQ(e.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white/80 px-9 py-2 text-sm backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
+      {/* grid */}
+      {loading ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[...Array(6)].map((_,i)=>(
+            <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
+          ))}
         </div>
-        <div className="w-full sm:w-64">
-          <select
-            className="w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-sm backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-            value={cat}
-            onChange={(e)=>setCat(e.target.value)}
-          >
-            <option value="">All categories</option>
-            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
+          No products found.
         </div>
-      </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map(p => (
+            <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
+              <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
+              <div className="flex items-start gap-3">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
+                  <span className="text-lg font-semibold">{(p.productName || '?').charAt(0).toUpperCase()}</span>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-base font-semibold text-slate-900">{p.productName || '—'}</h3>
+                  </div>
+                  <p className="truncate text-sm text-slate-600">{p.description || '—'}</p>
+                  <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                    <Tag size={14} /> {(p?.category?.name || 'Uncategorized')}
+                  </div>
+                </div>
+              </div>
 
-      {/* List */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white/80 backdrop-blur shadow-sm">
-        <div className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-gradient-to-tr from-indigo-400/15 to-fuchsia-400/15 blur-3xl" />
-        {loading ? (
-          <div className="flex items-center justify-center py-16 text-slate-500">
-            <div className="h-5 w-5 mr-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" /> Loading…
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-10 text-center text-slate-600">No products found.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50/80 text-slate-600">
-                <tr>
-                  <th className="px-4 py-2 text-left">Name</th>
-                  <th className="px-4 py-2 text-left">Category</th>
-                  <th className="px-4 py-2 text-left">Rate / Kg</th>
-                  <th className="px-4 py-2 text-left">Rate / Bori</th>
-                  <th className="px-4 py-2 text-left">Description</th>
-                  <th className="px-4 py-2 text-left w-44">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map(p => (
-                  <tr key={p.id} className="hover:bg-white/60">
-                    <td className="px-4 py-2 font-medium text-slate-900">{p.name || '—'}</td>
-                    <td className="px-4 py-2">
-                      <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-[12px] ${chipColor(p.categoryName || '')}`}>
-                        {p.categoryName || (catMap[String(p.category_id || '')] || '—')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2">{p.ratePerKg != null ? Number(p.ratePerKg).toLocaleString() : '—'}</td>
-                    <td className="px-4 py-2">{p.ratePerBori != null ? Number(p.ratePerBori).toLocaleString() : '—'}</td>
-                    <td className="px-4 py-2 text-slate-600 max-w-[40ch] truncate" title={p.description || ''}>
-                      {p.description || '—'}
-                    </td>
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={()=>openEdit(p)}
-                          className="px-2.5 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-1.5"
-                        >
-                          <Edit size={14}/> Edit
-                        </button>
-                        <button
-                          onClick={()=>handleDelete(p.id)}
-                          disabled={deletingId === p.id}
-                          className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 inline-flex items-center gap-1.5 disabled:opacity-60"
-                        >
-                          <Trash2 size={14}/> {deletingId === p.id ? 'Deleting…' : 'Delete'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+              {/* rates */}
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {(p.productUnits || []).slice().sort(byAlpha(x => x?.unit?.name)).map(u => (
+                  <RateChip key={u.id} name={u?.unit?.name ?? '—'} rate={u?.rate ?? '—'} />
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                {(!p.productUnits || p.productUnits.length === 0) && (
+                  <span className="text-xs text-slate-400">No rates yet</span>
+                )}
+              </div>
 
-      {/* Create / Edit Modals */}
-      {showCreate && (
-        <ProdModal
-          title="Create Product"
-          categories={categories}
-          form={form}
-          setForm={setForm}
-          onCancel={()=>setShowCreate(false)}
-          onSubmit={handleCreate}
-          saving={saving}
-        />
+              {/* actions */}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => openUnitsManager(p)}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                >
+                  <DollarSign size={16} /> Manage Units
+                </button>
+                <button
+                  onClick={() => openEditProduct(p)}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                >
+                  <Pencil size={16} /> Edit
+                </button>
+                <button
+                  onClick={() => deleteProduct(p)}
+                  className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                >
+                  <Trash2 size={16} /> Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
-      {showEdit && (
-        <ProdModal
-          title="Edit Product"
-          categories={categories}
-          form={form}
-          setForm={setForm}
-          onCancel={()=>{ setShowEdit(false); setEditingId(null); }}
-          onSubmit={handleEdit}
-          saving={saving}
-        />
-      )}
-    </div>
-  );
-}
 
-/* -------------- subcomponents -------------- */
-function StatCard({ icon: Icon, label, value, hue }) {
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white/80 p-4 backdrop-blur shadow-sm">
-      <div className={`pointer-events-none absolute -right-8 -top-8 h-20 w-20 rounded-full bg-gradient-to-tr ${hue} opacity-25 blur-2xl`} />
-      <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white">
-          <Icon size={18}/>
-        </div>
-        <div>
-          <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-          <div className="text-xl font-semibold text-slate-900">{value ?? '—'}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ProdModal({ title, categories, form, setForm, onCancel, onSubmit, saving }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white/90 backdrop-blur shadow-sm">
-        <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-gradient-to-tr from-indigo-400/20 to-fuchsia-400/20 blur-2xl" />
-        <div className="flex items-center justify-between p-4 border-b border-slate-100">
-          <div className="text-lg font-semibold">{title}</div>
-          <button className="p-1 hover:opacity-70" onClick={onCancel}><X size={18}/></button>
-        </div>
-        <form onSubmit={onSubmit} className="p-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Product name" required>
-              <input
-                className="w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                value={form.name}
-                onChange={(e)=>setForm({...form, name:e.target.value})}
-                required
-              />
-            </Field>
-            <Field label="Category" required>
-              <select
-                className="w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                value={form.category_id}
-                onChange={(e)=>setForm({...form, category_id:e.target.value})}
-                required
-              >
-                <option value="">Select…</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </Field>
+      {/* Create/Edit Product */}
+      <Modal
+        open={openEdit}
+        onClose={() => setOpenEdit(false)}
+        title={editing ? 'Edit Product' : 'New Product'}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm" onClick={()=>setOpenEdit(false)}>Cancel</button>
+            <button className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" onClick={submitProduct}>
+              <Save size={16} /> {editing ? 'Save changes' : 'Create'}
+            </button>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Rate per Kg">
-              <input
-                type="number" step="0.01"
-                className="w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                value={form.ratePerKg}
-                onChange={(e)=>setForm({...form, ratePerKg:e.target.value})}
-              />
-            </Field>
-            <Field label="Rate per Bori">
-              <input
-                type="number" step="0.01"
-                className="w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                value={form.ratePerBori}
-                onChange={(e)=>setForm({...form, ratePerBori:e.target.value})}
-              />
-            </Field>
-          </div>
-
-          <Field label="Description">
-            <textarea
-              rows={3}
-              className="w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 backdrop-blur focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-              value={form.description}
-              onChange={(e)=>setForm({...form, description:e.target.value})}
+        }
+      >
+        <form onSubmit={submitProduct} className="grid gap-4">
+          <Field label="Product Name">
+            <input className="rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200"
+              value={form.productName}
+              onChange={(e)=> setForm(f => ({...f, productName: e.target.value}))}
+              required
             />
           </Field>
 
-          <div className="pt-2 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-800 hover:bg-slate-200"
-              onClick={onCancel}
-            >Cancel</button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white hover:from-indigo-700 hover:to-fuchsia-700 disabled:opacity-60"
+          <Field label="Description">
+            <textarea className="min-h-[80px] rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200"
+              value={form.description}
+              onChange={(e)=> setForm(f => ({...f, description: e.target.value}))}
+            />
+          </Field>
+
+          <Field label="Category">
+            <select
+              className="rounded-xl border bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200"
+              value={form.category_id}
+              onChange={(e)=> setForm(f => ({...f, category_id: e.target.value}))}
             >
-              {saving ? 'Saving…' : 'Save'}
+              <option value="">— Select —</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.id}>{c.name || c.categoryName}</option>
+              ))}
+            </select>
+          </Field>
+
+          {!editing && (
+            <div className="rounded-xl border p-3">
+              <div className="mb-2 text-sm font-medium text-slate-700">Initial Units (optional)</div>
+              <div className="grid gap-2">
+                {initUnits.map((row, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <select
+                      className="w-48 rounded-xl border bg-white px-3 py-2"
+                      value={row.unit_id}
+                      onChange={(e)=> {
+                        const v = e.target.value;
+                        setInitUnits(list => list.map((r,i)=> i===idx ? {...r, unit_id: v} : r));
+                      }}
+                    >
+                      <option value="">Unit…</option>
+                      {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Rate"
+                      className="w-36 rounded-xl border px-3 py-2"
+                      value={row.rate}
+                      onChange={(e)=> {
+                        const v = e.target.value;
+                        setInitUnits(list => list.map((r,i)=> i===idx ? {...r, rate: v} : r));
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={()=> setInitUnits(list => list.filter((_,i)=> i!==idx))}
+                      className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={()=> setInitUnits(list => [...list, { unit_id: '', rate: '' }])}
+                  className="inline-flex w-fit items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                >
+                  <Plus size={16}/> Add unit & rate
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">You can also add/edit rates later with “Manage Units”.</p>
+            </div>
+          )}
+        </form>
+      </Modal>
+
+      {/* Manage Units for a Product */}
+      <Modal
+        open={openUnits}
+        onClose={()=> setOpenUnits(false)}
+        title={unitsProduct ? `Manage Units — ${unitsProduct.productName}` : 'Manage Units'}
+      >
+        {/* existing units */}
+        <div className="grid gap-2">
+          {unitsForProduct.length === 0 ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">No units yet.</div>
+          ) : (
+            unitsForProduct.map(row => (
+              <div key={row.id} className="flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2">
+                <span className="min-w-28 rounded-lg bg-slate-100 px-2 py-1 text-sm">{row?.unit?.name ?? '—'}</span>
+                <input
+                  type="number" step="0.01"
+                  defaultValue={row.rate}
+                  onBlur={(e)=> updateUnitRate(row.id, e.target.value)}
+                  className="w-36 rounded-xl border px-3 py-2"
+                />
+                <button
+                  onClick={()=> removeUnitFromProduct(row.id)}
+                  className="ml-auto rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* add new */}
+        <div className="mt-4 rounded-xl border p-3">
+          <div className="mb-2 text-sm font-medium text-slate-700">Add unit</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="w-48 rounded-xl border bg-white px-3 py-2"
+              value={addUnitRow.unit_id}
+              onChange={(e)=> setAddUnitRow(r => ({...r, unit_id: e.target.value}))}
+            >
+              <option value="">Unit…</option>
+              {units
+                .filter(u => !unitsForProduct.some(r => r?.unit?.id === u.id))
+                .map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <input
+              type="number" step="0.01" placeholder="Rate"
+              className="w-36 rounded-xl border px-3 py-2"
+              value={addUnitRow.rate}
+              onChange={(e)=> setAddUnitRow(r => ({...r, rate: e.target.value}))}
+            />
+            <button
+              onClick={addUnitToProduct}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white"
+            >
+              <Plus size={16}/> Add
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </Modal>
     </div>
   );
 }

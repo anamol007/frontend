@@ -1,48 +1,67 @@
-import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 
-// Pages
 import DashboardHome from '../pages/DashboardHome';
 import UsersPage from '../pages/UsersPage';
 import ProductsPage from '../pages/ProductsPage';
 import CategoriesPage from '../pages/CategoriesPage';
-import CustomersPage from '../pages/CustomersPage';
-import DriversPage from '../pages/DriversPage';
 import InventoriesPage from '../pages/InventoriesPage';
 import StockPage from '../pages/StockPage';
-import ManagesPage from '../pages/ManagesPage';
-import CoordinatesPage from '../pages/CoordinatesPage';
+import CustomersPage from '../pages/CustomersPage';
+import DriversPage from '../pages/DriversPage';
 import DeliveriesPage from '../pages/DeliveriesPage';
+import CoordinatesPage from '../pages/CoordinatesPage';
+import ManagesPage from '../pages/ManagesPage';
+import FuturePage from '../pages/FuturePage';
+import ProductUnitsPage from '../pages/ProductUnitsPage';
+
 
 export default function DashboardLayout() {
   return (
-    <div className="min-h-screen bg-mesh-light">
-      <div className="flex min-h-screen">
+    <div className="h-screen w-full grid grid-cols-[280px_1fr] bg-slate-50">
+      {/* left */}
+      <aside className="border-r border-slate-200 bg-white/70 backdrop-blur-xl">
         <Sidebar />
-        <main className="flex-1 p-4 md:p-6">
-          <div className="max-w-7xl mx-auto">
-            <Topbar />
-            <div className="animate-fade-in">
-              <Routes>
-                <Route index element={<DashboardHome />} />
-                {/* Master Data */}
-                <Route path="users" element={<UsersPage />} />
-                <Route path="products" element={<ProductsPage />} />
-                <Route path="categories" element={<CategoriesPage />} />
-                <Route path="customers" element={<CustomersPage />} />
-                <Route path="drivers" element={<DriversPage />} />
-                {/* Transactions */}
-                <Route path="inventories" element={<InventoriesPage />} />
-                <Route path="stock" element={<StockPage />} />
-                <Route path="manages" element={<ManagesPage />} />
-                <Route path="coordinates" element={<CoordinatesPage />} />
-                <Route path="deliveries" element={<DeliveriesPage />} />
-                {/* Fallback */}
-                <Route path="*" element={<Navigate to="" replace />} />
-              </Routes>
-            </div>
+      </aside>
+
+      {/* right */}
+      <div className="relative overflow-hidden">
+        {/* soft animated blobs */}
+        <div className="pointer-events-none absolute inset-0 opacity-70">
+          <div className="absolute -top-24 -left-24 h-80 w-80 rounded-full bg-indigo-200 blur-3xl animate-[float_12s_ease-in-out_infinite]" />
+          <div className="absolute -bottom-20 right-10 h-96 w-96 rounded-full bg-emerald-200 blur-3xl animate-[float_10s_ease-in-out_infinite]" />
+          <style>{`
+            @keyframes float { 0%{transform:translateY(0)} 50%{transform:translateY(-14px)} 100%{transform:translateY(0)} }
+          `}</style>
+        </div>
+
+        <Topbar />
+
+        <main className="relative z-10 h-[calc(100vh-64px)] overflow-auto px-6 pb-10">
+          <div className="mx-auto max-w-7xl pt-6">
+            <Routes>
+              <Route index element={<DashboardHome />} />
+
+              {/* master data */}
+              <Route path="users" element={<UsersPage />} />
+              <Route path="products" element={<ProductsPage />} />
+              <Route path="categories" element={<CategoriesPage />} />
+              <Route path="customers" element={<CustomersPage />} />
+              <Route path="product-units" element={<ProductUnitsPage />} />
+              
+
+              {/* transactions */}
+              <Route path="inventories" element={<InventoriesPage />} />
+              <Route path="stock" element={<StockPage />} />
+              <Route path="drivers" element={<DriversPage />} />
+              <Route path="deliveries" element={<DeliveriesPage />} />
+              <Route path="coordinates" element={<CoordinatesPage />} />
+              <Route path="manages" element={<ManagesPage />} />
+
+              <Route path="future" element={<FuturePage />} />
+              <Route path="*" element={<Navigate to="." replace />} />
+            </Routes>
           </div>
         </main>
       </div>
