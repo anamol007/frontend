@@ -15,6 +15,7 @@ import CoordinatesPage from '../pages/CoordinatesPage';
 import ManagesPage from '../pages/ManagesPage';
 import FuturePage from '../pages/FuturePage';
 import ProductUnitsPage from '../pages/ProductUnitsPage';
+import OrdersPage from '../pages/OrdersPage'; // Import OrdersPage
 
 
 export default function DashboardLayout() {
@@ -49,7 +50,7 @@ export default function DashboardLayout() {
               <Route path="categories" element={<CategoriesPage />} />
               <Route path="customers" element={<CustomersPage />} />
               <Route path="product-units" element={<ProductUnitsPage />} />
-              
+              <Route path="orders" element={<OrdersPage />} />
 
               {/* transactions */}
               <Route path="inventories" element={<InventoriesPage />} />

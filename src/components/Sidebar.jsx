@@ -52,6 +52,7 @@ export default function Sidebar() {
             <Item to="/dashboard/product-units" icon={Scale} label="Product Units" />
             <Item to="/dashboard/categories" icon={Tags} label="Categories" />
             <Item to="/dashboard/customers" icon={UserCircle2} label="Customers" />
+            <Item to="/dashboard/orders" icon={ClipboardList} label="Orders" />
           </div>
         </div>
 

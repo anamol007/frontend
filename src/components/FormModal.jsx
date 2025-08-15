@@ -1,174 +1,173 @@
 // src/components/FormModal.jsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { X } from "lucide-react";
 
 /**
- * Props:
- *  - title: string
- *  - open: boolean
- *  - onClose: () => void
- *  - fields: Array<{ name, label, type, required?, options? }>
- *      type: 'text' | 'email' | 'password' | 'number' | 'select' | 'textarea'
- *      options: string[]     (for select)
- *  - initial: object
- *  - onSubmit: (values) => Promise<void> | void
+ * fields: [
+ *  { name, label, type:'text'|'email'|'number'|'password'|'textarea'|'select',
+ *    required?, placeholder?, step?, min?, max?, options?: Array<string|{value,label}> }
+ * ]
  */
 export default function FormModal({
-  title = 'Form',
-  open = false,
-  onClose,
+  open,
+  title = "Form",
   fields = [],
   initial = {},
   onSubmit,
+  onClose,
+  submitLabel = "Save",
 }) {
-  const [values, setValues] = useState(initial);
-  const [errors, setErrors] = useState({});
-
-  // Reset values/errors whenever dialog opens or initial changes
-  useEffect(() => {
-    if (open) {
-      setValues(initial || {});
-      setErrors({});
-    }
-  }, [open, initial]);
-
-  const byCols = useMemo(() => {
-    // auto 2-column on desktop for nice layout
-    return fields.length > 1;
-  }, [fields.length]);
-
-  function setVal(name, raw) {
-    let v = raw;
-    if (typeof v === 'string') v = v; // keep as is while typing; trim on submit
-    setValues((s) => ({ ...s, [name]: v }));
-  }
-
-  function validate() {
-    const e = {};
-    for (const f of fields) {
-      const raw = values[f.name];
-      const v = typeof raw === 'string' ? raw.trim() : raw;
-
-      if (f.required && (v === undefined || v === null || v === '')) {
-        e[f.name] = `${f.label || f.name} is required`;
-        continue;
+  const normalizedInitial = useMemo(() => {
+    const out = {};
+    fields.forEach((f) => {
+      let v = initial?.[f.name];
+      if (f.type === "select") {
+        if (v && typeof v === "object") {
+          // prefer id/value from an object
+          v = v.id ?? v.value ?? "";
+        }
+        // keep select as string for <select>, backend can cast
+        if (typeof v === "number") v = String(v);
       }
-      if (f.type === 'email' && v) {
-        const ok = /^\S+@\S+\.\S+$/.test(v);
-        if (!ok) e[f.name] = 'Enter a valid email address';
-      }
-      if (f.type === 'number' && v !== '' && v !== undefined && v !== null) {
-        if (Number.isNaN(Number(v))) e[f.name] = `${f.label || f.name} must be a number`;
-      }
-    }
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  }
+      if (v === undefined || v === null) v = f.type === "select" ? "" : "";
+      out[f.name] = v;
+    });
+    return out;
+  }, [fields, initial]);
 
-  async function handleSubmit(e) {
-    e.preventDefault(); // prevent native validation bubbles
-    if (!validate()) return;
+  const [form, setForm] = useState(normalizedInitial);
 
-    // Trim strings before sending
-    const cleaned = {};
-    for (const [k, raw] of Object.entries(values || {})) {
-      cleaned[k] = typeof raw === 'string' ? raw.trim() : raw;
-    }
-    await onSubmit?.(cleaned);
-  }
+  useEffect(() => setForm(normalizedInitial), [normalizedInitial, open]);
 
   if (!open) return null;
 
+  function getOptions(arr = []) {
+    return arr.map((opt) =>
+      typeof opt === "object" ? opt : { value: String(opt), label: String(opt) }
+    );
+  }
+
+  function update(name, value) {
+    setForm((s) => ({ ...s, [name]: value }));
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    // sanitize payload to allowed fields only
+    const payload = {};
+    fields.forEach((f) => {
+      let v = form[f.name];
+      if (f.type === "select") {
+        // cast numeric select values to number if possible
+        if (/^\d+$/.test(String(v))) v = Number(v);
+      }
+      if (f.type === "number") {
+        v = v === "" ? "" : Number(v);
+      }
+      if (v !== "" && v !== undefined && v !== null) payload[f.name] = v;
+    });
+    onSubmit?.(payload);
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      {/* Card */}
-      <div className="relative z-10 w-full max-w-3xl rounded-3xl bg-white p-6 shadow-xl">
-        {/* Title bar */}
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            aria-label="Close"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Form */}
-        <form noValidate onSubmit={handleSubmit}>
-          <div
-            className={`grid gap-4 ${byCols ? 'sm:grid-cols-2' : 'grid-cols-1'}`}
-          >
-            {fields.map((f) => (
-              <div key={f.name} className="flex flex-col">
-                <label className="mb-1 text-sm font-medium text-slate-700">
-                  {f.label}
-                  {f.required && <span className="text-rose-600"> *</span>}
-                </label>
-
-                {f.type === 'select' ? (
-                  <select
-                    value={values[f.name] ?? ''}
-                    onChange={(e) => setVal(f.name, e.target.value)}
-                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
-                  >
-                    <option value="">Select…</option>
-                    {(f.options || []).map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                ) : f.type === 'textarea' ? (
-                  <textarea
-                    value={values[f.name] ?? ''}
-                    onChange={(e) => setVal(f.name, e.target.value)}
-                    rows={3}
-                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
-                    placeholder={f.placeholder || ''}
-                  />
-                ) : (
-                  <input
-                    type={f.type || 'text'}
-                    value={values[f.name] ?? ''}
-                    onChange={(e) => setVal(f.name, e.target.value)}
-                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
-                    placeholder={f.placeholder || ''}
-                    // do NOT set required; we validate ourselves
-                  />
-                )}
-
-                {errors[f.name] && (
-                  <p className="mt-1 text-xs text-rose-600">{errors[f.name]}</p>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="mt-6 flex items-center justify-end gap-3">
+    <div className="fixed inset-0 z-[999]">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[min(900px,92vw)] -translate-x-1/2 -translate-y-1/2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-xl font-semibold text-slate-900">{title}</h3>
             <button
-              type="button"
               onClick={onClose}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+              aria-label="Close"
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              Save
+              <X size={18} />
             </button>
           </div>
-        </form>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              {fields.map((f) => {
+                const common =
+                  "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200";
+                if (f.type === "textarea") {
+                  return (
+                    <label key={f.name} className="space-y-1 md:col-span-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {f.label} {f.required ? <span className="text-rose-600">*</span> : null}
+                      </span>
+                      <textarea
+                        rows={4}
+                        className={common}
+                        placeholder={f.placeholder}
+                        value={form[f.name] ?? ""}
+                        onChange={(e) => update(f.name, e.target.value)}
+                        required={!!f.required}
+                      />
+                    </label>
+                  );
+                }
+                if (f.type === "select") {
+                  const opts = getOptions(f.options || []);
+                  return (
+                    <label key={f.name} className="space-y-1">
+                      <span className="text-sm font-medium text-slate-700">
+                        {f.label} {f.required ? <span className="text-rose-600">*</span> : null}
+                      </span>
+                      <select
+                        className={common}
+                        value={form[f.name] ?? ""}
+                        onChange={(e) => update(f.name, e.target.value)}
+                        required={!!f.required}
+                      >
+                        <option value="">Select…</option>
+                        {opts.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                }
+                return (
+                  <label key={f.name} className="space-y-1">
+                    <span className="text-sm font-medium text-slate-700">
+                      {f.label} {f.required ? <span className="text-rose-600">*</span> : null}
+                    </span>
+                    <input
+                      type={f.type || "text"}
+                      className={common}
+                      placeholder={f.placeholder}
+                      value={form[f.name] ?? ""}
+                      onChange={(e) => update(f.name, e.target.value)}
+                      required={!!f.required}
+                      step={f.step}
+                      min={f.min}
+                      max={f.max}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                {submitLabel}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );
