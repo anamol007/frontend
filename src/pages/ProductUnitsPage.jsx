@@ -3,13 +3,29 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
 
+/* ---------- date helpers ---------- */
+const ordinal = (n) => {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+const prettyDate = (d) => {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt)) return '—';
+  const M = dt.toLocaleString(undefined, { month: 'short' }); // Jan, Feb…
+  const D = ordinal(dt.getDate());                             // 1st, 2nd…
+  const Y = dt.getFullYear();
+  return `${M} ${D}, ${Y}`;
+};
+
 function UnitRow({ u, onEdit, onDelete }) {
+  const when = prettyDate(u.updatedAt || u.createdAt);
   return (
     <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-gradient-to-br from-white/85 to-white/60 p-4 hover:shadow-md transition-shadow">
       <div className="min-w-0">
         <div className="text-base font-semibold text-slate-900 truncate">{u.name}</div>
         <div className="mt-0.5 text-xs text-slate-500">
-          ID: {u.id} • Updated {new Date(u.updatedAt || u.createdAt).toLocaleString()}
+          ID: {u.id} • Updated {when}
         </div>
       </div>
       <div className="flex gap-2">

@@ -1,175 +1,228 @@
 // src/pages/StockPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Boxes, Package, MapPin, Plus, RefreshCw,
-  ChevronDown, ChevronRight, Pencil, Trash2, Settings2
+  Boxes, ChevronRight, ChevronDown, Search, Plus, RefreshCw,
+  Pencil, Trash2, Building2, Package2, Layers, CheckCircle2, XCircle
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
 
-const Chip = ({ children }) => (
-  <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
-    {children}
-  </span>
-);
+/* ---------- helpers ---------- */
+const ordinal = (n) => { const s=['th','st','nd','rd'], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
+const prettyDateTime = (d) => {
+  if (!d) return '—';
+  const dt = new Date(d); if (isNaN(dt)) return '—';
+  const M = dt.toLocaleString(undefined, { month: 'short' });
+  const D = ordinal(dt.getDate());
+  const Y = dt.getFullYear();
+  const T = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${M} ${D}, ${Y}, ${T}`;
+};
 
-const CountBadge = ({ n }) => (
-  <span className="inline-flex items-center rounded-full bg-slate-900/90 px-2.5 py-1 text-xs font-semibold text-white">
-    {n} {n === 1 ? 'record' : 'records'}
-  </span>
-);
+/* Defensive normalizer for stocks embedded under products */
+const normStock = (s = {}) => ({
+  id: s.id ?? s.ID ?? null,
+  product_id: s.product_id ?? s.productId ?? s.product?.id ?? null,
+  inventory_id: s.inventory_id ?? s.inventoryId ?? s.inventory?.id ?? null,
+  unit_id: s.unit_id ?? s.unitId ?? s.unit?.id ?? null,
+  stockQuantity: Number(s.stockQuantity ?? s.qty ?? 0),
+  productName: s.product?.productName ?? s.productName ?? '',
+  inventoryName: s.inventory?.inventoryName ?? s.inventoryName ?? '',
+  unitName: s.unit?.name ?? s.unitName ?? '',
+  updatedAt: s.updatedAt ?? s.createdAt ?? null,
+});
 
-// -------------------- page --------------------
 export default function StockPage() {
-  const nav = useNavigate();
-
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
-  const [ok, setOk] = useState('');
-
+  // data
   const [products, setProducts] = useState([]);
   const [inventories, setInventories] = useState([]);
   const [units, setUnits] = useState([]);
 
-  const [query, setQuery] = useState('');
+  // ui
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+
+  // filters
+  const [q, setQ] = useState('');
+  const [invFilter, setInvFilter] = useState('');
+  const [unitFilter, setUnitFilter] = useState('');
+
+  // expansion state (product ids)
+  const [openIds, setOpenIds] = useState(new Set());
+
+  // modal
   const [modalOpen, setModalOpen] = useState(false);
-  const [editRow, setEditRow] = useState(null);
-  const [initialCreate, setInitialCreate] = useState({});
-  const [expanded, setExpanded] = useState(() => new Set());
-
-  const toggle = (id) =>
-    setExpanded(prev => {
-      const n = new Set(prev);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
-
-  // helpers for mixed payloads
-  const pidOf      = s => s.productId ?? s.product_id ?? s.product?.id;
-  const pnameOf    = s => s.product?.productName ?? s.productName ?? '—';
-  const invIdOf    = s => s.inventoryId ?? s.inventory_id ?? s.inventory?.id;
-  const invNameOf  = s => s.inventory?.inventoryName ?? s.inventoryName ?? '—';
-  const unitIdOf   = s => s.unit_id ?? s.unit?.id;
-  const unitNameOf = s => s.unit?.name ?? s.unitName ?? s.unit ?? '';
+  const [editRow, setEditRow] = useState(null); // stock row or null (for create)
+  const [prefillProductId, setPrefillProductId] = useState(null); // for "Add stock" under a product
 
   async function fetchAll() {
-    setLoading(true); setErr(''); setOk('');
     try {
-      const [s, p, i, u] = await Promise.all([
-        api.get('/stock'),
-        api.get('/products'),
-        api.get('/inventory'),
-        api.get('/units'),
+      setLoading(true); setErr(''); setOk('');
+      const [p, i, u] = await Promise.all([
+        api.get('/products/'),
+        api.get('/inventory/'),
+        api.get('/units/'),
       ]);
-      setRows(Array.isArray(s?.data?.data) ? s.data.data : (s?.data ?? []));
-      setProducts(p?.data?.data ?? p?.data ?? []);
-      setInventories(i?.data?.data ?? i?.data ?? []);
-      setUnits(u?.data?.data ?? u?.data ?? []);
+      const productsData = Array.isArray(p?.data?.data) ? p.data.data : (p?.data || []);
+      const invData = Array.isArray(i?.data?.data) ? i.data.data : (i?.data || []);
+      const unitData = Array.isArray(u?.data?.data) ? u.data.data : (u?.data || []);
+
+      // sort for nicer UX
+      productsData.sort((a,b) => String(a.productName||'').localeCompare(String(b.productName||'')));
+      invData.sort((a,b) => String(a.inventoryName||'').localeCompare(String(b.inventoryName||'')));
+      unitData.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+
+      setProducts(productsData);
+      setInventories(invData);
+      setUnits(unitData);
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Error fetching stock');
+      setErr(e?.response?.data?.message || e?.message || 'Error fetching stock data');
     } finally {
       setLoading(false);
     }
   }
+
   useEffect(() => { fetchAll(); }, []);
 
-  // group -> product -> inventory -> units(list)
-  const groups = useMemo(() => {
-    const byProduct = new Map();
-    for (const s of rows) {
-      const pk = pidOf(s) ?? `__${pnameOf(s)}`;
-      let g = byProduct.get(pk);
-      if (!g) {
-        g = { pid: pidOf(s), name: pnameOf(s), inventories: new Map(), raw: [] };
-        byProduct.set(pk, g);
-      }
-      g.raw.push(s);
-      const invKey = invIdOf(s) ?? `__${invNameOf(s)}`;
-      const invObj = g.inventories.get(invKey) || { invId: invIdOf(s), invName: invNameOf(s), units: [] };
-      invObj.units.push(s); // one unit = one stock record
-      g.inventories.set(invKey, invObj);
-    }
-    let arr = Array.from(byProduct.values()).map(g => ({
-      ...g,
-      inventories: Array.from(g.inventories.values())
-        .sort((a,b) => (a.invName||'').localeCompare(b.invName||'')),
-      count: (g.raw ?? []).length,
-    }));
-    const q = query.trim().toLowerCase();
-    if (q) {
-      arr = arr.filter(g =>
-        g.name.toLowerCase().includes(q) ||
-        g.inventories.some(inv => inv.invName.toLowerCase().includes(q))
-      );
-    }
-    arr.sort((a,b)=> a.name.localeCompare(b.name));
-    return arr;
-  }, [rows, query]);
-
-  // fields
-  const PROD_OPTIONS = products
-    .slice().sort((a,b)=>(a.productName||'').localeCompare(b.productName||''))
-    .map(p => ({ value: p.id, label: p.productName }));
-
-  const INV_OPTIONS = inventories
-    .slice().sort((a,b)=>(a.inventoryName||'').localeCompare(b.inventoryName||''))
-    .map(i => ({ value: i.id, label: i.inventoryName }));
-
-  const UNIT_OPTIONS = units
-    .slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''))
-    .map(u => ({ value: u.id, label: u.name }));
-
-  const CREATE_FIELDS = [
-    { name: 'product_id',   type: 'select', label: 'Product',   required: true, options: PROD_OPTIONS },
-    { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: INV_OPTIONS },
-    { name: 'unit_id',      type: 'select', label: 'Unit',      required: true, options: UNIT_OPTIONS },
-    { name: 'stockQuantity', type: 'number', step: 'any', label: 'Quantity', required: true },
-  ];
-
-  const EDIT_FIELDS = [
-    { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: INV_OPTIONS },
-    { name: 'unit_id',      type: 'select', label: 'Unit',      required: true, options: UNIT_OPTIONS },
-    { name: 'stockQuantity', type: 'number', step: 'any', label: 'Quantity', required: true },
-  ];
-
-  const sanitize = (fields, data) => {
-    const allow = new Set(fields.map(f => f.name));
-    const out = {};
-    Object.entries(data || {}).forEach(([k,v])=>{
-      if (!allow.has(k)) return;
-      if (v === '' || v === null || v === undefined) return;
-      out[k] = v;
+  // Build grouped view: one row per product, expandable to show that product's stocks
+  const grouped = useMemo(() => {
+    return (products || []).map(p => {
+      const stocks = Array.isArray(p?.stocks) ? p.stocks.map(s => {
+        const ns = normStock(s);
+        // attach product fallback names
+        ns.productName = ns.productName || p.productName || '';
+        return ns;
+      }) : [];
+      // optional filters on stock level
+      const filteredStocks = stocks.filter(s => {
+        if (invFilter && String(s.inventory_id) !== String(invFilter)) return false;
+        if (unitFilter && String(s.unit_id) !== String(unitFilter)) return false;
+        const term = q.trim().toLowerCase();
+        if (!term) return true;
+        const hay = `${p.productName||''} ${s.inventoryName||''} ${s.unitName||''}`.toLowerCase();
+        return hay.includes(term);
+      });
+      // derive summary
+      const invSet = new Set(filteredStocks.map(s => s.inventory_id));
+      const unitSet = new Set(filteredStocks.map(s => s.unit_id));
+      const totalRows = filteredStocks.length;
+      return {
+        productId: p.id,
+        productName: p.productName || `#${p.id}`,
+        description: p.description || '',
+        stocks: filteredStocks,
+        inventoriesCount: invSet.size,
+        unitsCount: unitSet.size,
+        rowsCount: totalRows,
+        updatedAt: (filteredStocks[0]?.updatedAt || p.updatedAt),
+      };
+    }).filter(g => {
+      // If product has 0 rows after filter AND search term is present, we can still hide
+      if (!q.trim()) return true;
+      return g.rowsCount > 0 || (g.productName.toLowerCase().includes(q.trim().toLowerCase()));
     });
-    return out;
+  }, [products, q, invFilter, unitFilter]);
+
+  const allOpen = grouped.length > 0 && grouped.every(g => openIds.has(g.productId));
+  const toggleAll = () => {
+    if (allOpen) setOpenIds(new Set());
+    else setOpenIds(new Set(grouped.map(g => g.productId)));
   };
 
-  async function onSubmit(form) {
-    setErr(''); setOk('');
+  const toggleOne = (pid) => {
+    const s = new Set(openIds);
+    if (s.has(pid)) s.delete(pid); else s.add(pid);
+    setOpenIds(s);
+  };
+
+  // CRUD
+  async function createStock(body) {
+    // body: { product_id, inventory_id, unit_id, stockQuantity }
+    await api.post('/stock/', body);
+  }
+
+  async function updateStock(id, body) {
+    await api.put(`/stock/${id}`, body);
+  }
+
+  async function deleteStock(row) {
+    if (!window.confirm(`Remove stock row for "${row.productName}" in "${row.inventoryName}" (${row.unitName})?`)) return;
     try {
-      if (editRow?.id) {
-        await api.put(`/stock/${editRow.id}`, sanitize(EDIT_FIELDS, form));
-        setOk('Stock updated');
-      } else {
-        await api.post('/stock', sanitize(CREATE_FIELDS, form));
-        setOk('Stock created');
-      }
-      setModalOpen(false); setEditRow(null); setInitialCreate({});
-      fetchAll();
+      setErr(''); setOk('');
+      await api.delete(`/stock/${row.id}`);
+      setOk('Stock row deleted');
+      await fetchAll();
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Action failed');
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
     }
   }
 
-  async function onDelete(item) {
-    if (!window.confirm('Delete this stock record?')) return;
+  // open modals
+  function openCreate(productId = null) {
+    setPrefillProductId(productId);
+    setEditRow(null);
+    setModalOpen(true);
+  }
+  function openEdit(stockRow) {
+    setPrefillProductId(null);
+    setEditRow(stockRow);
+    setModalOpen(true);
+  }
+  function closeModal() {
+    setPrefillProductId(null);
+    setEditRow(null);
+    setModalOpen(false);
+  }
+
+  // fields for FormModal
+  const CREATE_FIELDS = useMemo(() => {
+    const productOptions = (products || []).map(p => ({ value: p.id, label: p.productName || `#${p.id}` }));
+    const invOptions = (inventories || []).map(i => ({ value: i.id, label: i.inventoryName || `#${i.id}` }));
+    const unitOptions = (units || []).map(u => ({ value: u.id, label: u.name || `#${u.id}` }));
+
+    return [
+      { name: 'product_id',   type: 'select', label: 'Product', required: true, options: productOptions, disabled: !!prefillProductId },
+      { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: invOptions },
+      { name: 'unit_id',      type: 'select', label: 'Unit', required: true, options: unitOptions },
+      { name: 'stockQuantity', type: 'number', label: 'Quantity', required: true, step: '0.01', min: '0' },
+    ];
+  }, [products, inventories, units, prefillProductId]);
+
+  const EDIT_FIELDS = useMemo(() => ([
+    // Keep edit simple: change quantity (and optionally inventory/unit if you want)
+    { name: 'stockQuantity', type: 'number', label: 'Quantity', required: true, step: '0.01', min: '0' },
+  ]), []);
+
+  function sanitize(fields, payload) {
+    const allow = new Set(fields.map(f => f.name));
+    const out = {};
+    Object.entries(payload || {}).forEach(([k, v]) => {
+      if (!allow.has(k)) return;
+      if (v === '' || v === undefined || v === null) return;
+      out[k] = v;
+    });
+    return out;
+  }
+
+  async function handleSubmit(form) {
     try {
-      await api.delete(`/stock/${item.id}`);
-      setOk('Stock deleted'); setErr('');
-      fetchAll();
+      setErr(''); setOk('');
+      if (editRow?.id) {
+        const body = sanitize(EDIT_FIELDS, form);
+        await updateStock(editRow.id, body);
+        setOk('Stock updated');
+      } else {
+        const body = sanitize(CREATE_FIELDS, form);
+        // if we came from a product-scoped add, force product_id
+        if (prefillProductId) body.product_id = prefillProductId;
+        await createStock(body);
+        setOk('Stock created');
+      }
+      closeModal();
+      await fetchAll();
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
+      setErr(e?.response?.data?.message || e?.message || 'Action failed');
     }
   }
 
@@ -179,174 +232,214 @@ export default function StockPage() {
       <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">Stock</h1>
-            <p className="text-sm text-slate-500">One card per product. Expand to see inventories and their units.</p>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold text-slate-900">
+              <Boxes size={20}/> Stock
+            </h1>
+            <p className="text-sm text-slate-500">
+              Expand a product to see stock by inventory and unit. Create, edit, or remove rows.
+            </p>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
-              <Boxes size={16} className="text-slate-400" />
+              <Search size={16} className="text-slate-400" />
               <input
-                value={query}
-                onChange={(e)=> setQuery(e.target.value)}
-                placeholder="Search product or inventory…"
+                value={q}
+                onChange={(e)=> setQ(e.target.value)}
+                placeholder="Search product / inventory / unit…"
                 className="w-64 bg-transparent outline-none text-sm"
               />
             </div>
+
+            <select
+              value={invFilter}
+              onChange={e=> setInvFilter(e.target.value)}
+              className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
+            >
+              <option value="">All inventories</option>
+              {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName}</option>)}
+            </select>
+
+            <select
+              value={unitFilter}
+              onChange={e=> setUnitFilter(e.target.value)}
+              className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
+            >
+              <option value="">All units</option>
+              {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+
             <button
               onClick={fetchAll}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
             >
-              <RefreshCw size={16} /> Refresh
+              <RefreshCw size={16}/> Refresh
             </button>
+
             <button
-              onClick={()=>{
-                setEditRow(null);
-                setInitialCreate({});
-                setModalOpen(true);
-              }}
+              onClick={()=> openCreate(null)}
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
             >
-              <Plus size={16} /> New Stock
+              <Plus size={16}/> New Stock
             </button>
           </div>
         </div>
-        {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
-        {ok  && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+
+        {(err || ok) && (
+          <div className="mt-3">
+            {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
+            {ok  && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+          </div>
+        )}
       </div>
 
-      {/* Content */}
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[...Array(6)].map((_,i)=><div key={i} className="h-36 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />)}
-        </div>
-      ) : groups.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">No stock found.</div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {groups.map(g => {
-            const key = g.pid ?? g.name;
-            const isOpen = expanded.has(key);
-            return (
-              <div key={key} className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-[0_1px_0_0_rgb(0_0_0/0.02)]">
-                {/* product header */}
-                <div className="flex items-start gap-3">
-                  <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white">
-                    <Package size={20}/>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="truncate text-lg font-semibold text-slate-900">{g.name}</h3>
-                      <CountBadge n={g.count}/>
-                    </div>
-                    <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                      {isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                      <button onClick={()=>toggle(key)} className="underline decoration-dotted">
-                        {isOpen ? 'Click to collapse' : 'Click to expand'}
-                      </button>
-                      <span className="mx-1">·</span>
-                      {/* product quick actions */}
-                      <button
-                        onClick={() => nav(`/dashboard/products?edit=${g.pid}`)}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 hover:bg-slate-50"
-                        title="Edit product"
-                      >
-                        <Settings2 size={14}/> Edit product
-                      </button>
-                      <button
-                        onClick={()=>{
-                          setEditRow(null);
-                          setInitialCreate({ product_id: g.pid });
-                          setModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 hover:bg-slate-50"
-                        title="Create stock for this product"
-                      >
-                        <Plus size={14}/> New stock
-                      </button>
-                    </div>
-                  </div>
-                </div>
+      {/* Expand/Collapse all */}
+      <div className="flex justify-end">
+        <button
+          onClick={toggleAll}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+        >
+          {allOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+          {allOpen ? 'Collapse all' : 'Expand all'}
+        </button>
+      </div>
 
-                {/* body (inventories with unit chips) */}
-                <div className={`grid overflow-hidden transition-[grid-template-rows] duration-300 ease-in-out ${isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-                  <div className="min-h-0">
-                    <div className="mt-4 space-y-2">
-                      {g.inventories.map(inv => (
-                        <div key={`${g.name}-${inv.invName}`} className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <MapPin size={14} className="text-slate-400"/>
-                            <div className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-                              {inv.invName}
+      {/* Expandable Table */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur">
+        {/* header */}
+        <div className="grid grid-cols-[32px_1.2fr_.7fr_.7fr_.8fr_.9fr] items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <span />
+          <span className="flex items-center gap-2"><Package2 size={14}/> Product</span>
+          <span className="hidden sm:block">Inventories</span>
+          <span className="hidden sm:block">Units</span>
+          <span>Rows</span>
+          <span className="text-right">Last Update</span>
+        </div>
+
+        {/* rows */}
+        {loading ? (
+          <div className="p-4">
+            {[...Array(6)].map((_,i)=>(
+              <div key={i} className="h-12 animate-pulse rounded-xl border border-slate-200 bg-white/60 mb-2"/>
+            ))}
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-200">
+            {grouped.map(g => {
+              const isOpen = openIds.has(g.productId);
+              return (
+                <li key={g.productId}>
+                  {/* product row */}
+                  <div className="grid grid-cols-[32px_1.2fr_.7fr_.7fr_.8fr_.9fr] items-center gap-3 px-4 py-3 hover:bg-slate-50/70 transition">
+                    <button
+                      onClick={()=> toggleOne(g.productId)}
+                      className="grid h-8 w-8 place-items-center rounded-lg border bg-white text-slate-700 hover:bg-slate-100"
+                      aria-label={isOpen ? 'Collapse' : 'Expand'}
+                    >
+                      {isOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                    </button>
+
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-900">{g.productName}</div>
+                      {g.description && <div className="truncate text-xs text-slate-500">{g.description}</div>}
+                    </div>
+
+                    <div className="hidden sm:block">
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                        <Building2 size={12}/> {g.inventoriesCount}
+                      </span>
+                    </div>
+
+                    <div className="hidden sm:block">
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                        <Layers size={12}/> {g.unitsCount}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                        Rows {g.rowsCount}
+                      </span>
+                    </div>
+
+                    <div className="text-right text-xs text-slate-500">{prettyDateTime(g.updatedAt)}</div>
+                  </div>
+
+                  {/* expanded sub-table */}
+                  {isOpen && (
+                    <div className="px-4 pb-4">
+                      <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
+                        {/* sub header */}
+                        <div className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr] items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          <span>Inventory</span>
+                          <span>Unit</span>
+                          <span>Quantity</span>
+                          <span>Updated</span>
+                          <span className="text-right">Actions</span>
+                        </div>
+
+                        {/* sub rows */}
+                        {(g.stocks.length === 0) ? (
+                          <div className="px-3 py-3 text-sm text-slate-500">No stock rows for this product.</div>
+                        ) : g.stocks.map(row => (
+                          <div key={row.id} className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr] items-center gap-3 border-t border-slate-200 px-3 py-2.5">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm text-slate-800">{row.inventoryName || `#${row.inventory_id}`}</div>
+                            </div>
+                            <div className="text-sm text-slate-700">{row.unitName || `#${row.unit_id}`}</div>
+                            <div className="text-sm font-semibold text-slate-900">{row.stockQuantity}</div>
+                            <div className="text-xs text-slate-500">{prettyDateTime(row.updatedAt)}</div>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={()=> openEdit(row)}
+                                className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                              >
+                                <Pencil size={14}/> Edit
+                              </button>
+                              <button
+                                onClick={()=> deleteStock(row)}
+                                className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+                              >
+                                <Trash2 size={14}/> Delete
+                              </button>
                             </div>
                           </div>
+                        ))}
+                      </div>
 
-                          {/* units for this inventory */}
-                          {inv.units?.length ? (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {inv.units
-                                .slice()
-                                .sort((a,b)=> (unitNameOf(a)||'').localeCompare(unitNameOf(b)||''))
-                                .map(it => (
-                                <div
-                                  key={it.id}
-                                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1"
-                                >
-                                  <span className="text-xs font-semibold text-slate-900">
-                                    {it.stockQuantity}
-                                  </span>
-                                  <span className="text-[11px] text-slate-600">
-                                    {unitNameOf(it)}
-                                  </span>
-
-                                  <button
-                                    onClick={()=>{
-                                      setEditRow({
-                                        id: it.id,
-                                        inventory_id: invIdOf(it),
-                                        unit_id: unitIdOf(it),
-                                        stockQuantity: it.stockQuantity,
-                                      });
-                                      setInitialCreate({});
-                                      setModalOpen(true);
-                                    }}
-                                    className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                                    title="Edit"
-                                  >
-                                    <Pencil size={14}/>
-                                  </button>
-
-                                  <button
-                                    onClick={() => onDelete(it)}
-                                    className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-rose-200 bg-white text-rose-600 hover:bg-rose-50"
-                                    title="Delete"
-                                  >
-                                    <Trash2 size={14}/>
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="mt-2 text-xs text-slate-400">No unit records.</div>
-                          )}
-                        </div>
-                      ))}
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          onClick={()=> openCreate(g.productId)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                        >
+                          <Plus size={16}/> Add stock for “{g.productName}”
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                  )}
+                </li>
+              );
+            })}
 
-      {/* modal */}
+            {grouped.length === 0 && !loading && (
+              <li className="px-4 py-6 text-center text-slate-500">No matches. Try different filters or search.</li>
+            )}
+          </ul>
+        )}
+      </div>
+
+      {/* Modal */}
       <FormModal
         title={editRow ? 'Edit Stock' : 'Create Stock'}
         open={modalOpen}
-        onClose={()=>{ setModalOpen(false); setEditRow(null); setInitialCreate({}); }}
-        fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-        initial={editRow ? editRow : initialCreate}
-        onSubmit={onSubmit}
+        onClose={closeModal}
+        fields={editRow ? (EDIT_FIELDS) : (CREATE_FIELDS)}
+        initial={
+          editRow
+            ? { stockQuantity: editRow.stockQuantity }
+            : (prefillProductId ? { product_id: prefillProductId } : {})
+        }
+        onSubmit={handleSubmit}
       />
     </div>
   );
