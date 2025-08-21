@@ -13,7 +13,6 @@ import DriversPage from '../pages/DriversPage';
 import DeliveriesPage from '../pages/DeliveriesPage';
 import CoordinatesPage from '../pages/CoordinatesPage';
 import ManagesPage from '../pages/ManagesPage';
-import FuturePage from '../pages/FuturePage';
 import ProductUnitsPage from '../pages/ProductUnitsPage';
 import OrdersPage from '../pages/OrdersPage'; // Import OrdersPage
 
@@ -60,7 +59,6 @@ export default function DashboardLayout() {
               <Route path="coordinates" element={<CoordinatesPage />} />
               <Route path="manages" element={<ManagesPage />} />
 
-              <Route path="future" element={<FuturePage />} />
               <Route path="*" element={<Navigate to="." replace />} />
             </Routes>
           </div>
