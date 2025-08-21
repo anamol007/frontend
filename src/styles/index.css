@@ -57,3 +57,16 @@ input[type=number] { -moz-appearance: textfield; }
   outline: none;
   box-shadow: none;
 }
+
+/* Make the React app fill the viewport and disable page-level scrolling */
+html, body, #root {
+  height: 100%;
+}
+body {
+  overflow: hidden; /* no page scroll; we'll scroll inside the layout */
+}
+
+/* Optional: nicer inertial scrolling & scroll chaining control */
+.scroll-area {
+  overscroll-behavior: contain; /* prevent scroll chaining into the page */
+}

@@ -14,8 +14,6 @@ import StockPage from './pages/StockPage';
 import CustomersPage from './pages/CustomersPage';
 import DriversPage from './pages/DriversPage';
 import DeliveriesPage from './pages/DeliveriesPage';
-import CoordinatesPage from './pages/CoordinatesPage';
-import ManagesPage from './pages/ManagesPage';
 
 export default function App(){
   return (
@@ -37,8 +35,6 @@ export default function App(){
           <Route path="customers" element={<CustomersPage />} />
           <Route path="drivers" element={<DriversPage />} />
           <Route path="deliveries" element={<DeliveriesPage />} />
-          <Route path="coordinates" element={<CoordinatesPage />} />
-          <Route path="manages" element={<ManagesPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

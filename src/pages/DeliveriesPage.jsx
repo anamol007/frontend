@@ -1,9 +1,13 @@
+// src/pages/DeliveriesPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, Pencil, Trash2, RefreshCw, Truck, Package, ClipboardList, X, Info, AlertTriangle } from 'lucide-react';
+import {
+  Search, Plus, Pencil, Trash2, RefreshCw,
+  Truck, Package, ClipboardList, X, Info, AlertTriangle, Hash
+} from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
 
-// ---- normalize helpers (defensive against snake/camel/backref shapes)
+/** Normalize shapes coming from BE (snake/camel/backrefs) */
 const norm = (d = {}) => ({
   id: d.id ?? d.ID ?? null,
   order_id: d.order_id ?? d.orderId ?? d.order?.id ?? null,
@@ -17,8 +21,21 @@ const norm = (d = {}) => ({
 
 const sortByLabel = (a, b) => a.label.localeCompare(b.label);
 
+function Badge({ children }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
+      {children}
+    </span>
+  );
+}
+
 function DeliveryCard({ d, onEdit, onDelete, onView }) {
   const od = norm(d);
+  const driverName =
+    od.driver?.user?.fullname ||
+    od.driver?.driverName ||
+    (od.driver_id ? `Driver #${od.driver_id}` : '—');
+
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
       <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
@@ -27,9 +44,13 @@ function DeliveryCard({ d, onEdit, onDelete, onView }) {
           <ClipboardList size={18} />
         </div>
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate text-base font-semibold text-slate-900">Delivery #{od.id ?? '—'}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="truncate text-base font-semibold text-slate-900">
+              Delivery #{od.id ?? '—'}
+            </h3>
+            {od.deliveryStatus && <Badge>{od.deliveryStatus}</Badge>}
           </div>
+
           <div className="mt-1 grid gap-1 text-sm text-slate-600">
             <div className="flex items-center gap-2">
               <Package size={14} className="text-slate-400" />
@@ -37,16 +58,9 @@ function DeliveryCard({ d, onEdit, onDelete, onView }) {
             </div>
             <div className="flex items-center gap-2">
               <Truck size={14} className="text-slate-400" />
-              <span className="truncate">
-                Driver: {od.driver?.user?.fullname || od.driver?.driverName || od.driver_id || '—'}
-              </span>
+              <span className="truncate">Driver: {driverName}</span>
             </div>
           </div>
-          {od.deliveryStatus && (
-            <div className="mt-2 inline-flex items-center rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
-              {od.deliveryStatus}
-            </div>
-          )}
         </div>
       </div>
 
@@ -89,46 +103,46 @@ export default function DeliveriesPage() {
   const [q, setQ] = useState('');
   const [driverFilter, setDriverFilter] = useState('');
 
-  // modal
+  // modals
   const [openForm, setOpenForm] = useState(false);
   const [editRow, setEditRow] = useState(null);
-
-  // details modal
   const [inspect, setInspect] = useState(null);
 
-  // permissions / lazy orders loading
+  // orders access gate
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersErr, setOrdersErr] = useState('');
-  const [canManage, setCanManage] = useState(true); // becomes false if /orders is forbidden
+  const [canManage, setCanManage] = useState(true);
 
-  // -------- fetch public data only on load (deliveries + drivers)
+  // ---------- initial load: deliveries + drivers
   async function fetchPublic() {
     try {
       setLoading(true);
       setErr(''); setOk('');
       const [dels, drs] = await Promise.all([
-        api.get('/deliveries'),
-        api.get('/drivers'),
+        api.get('/deliveries/'),
+        api.get('/drivers/'),
       ]);
+
       const list = Array.isArray(dels?.data?.data) ? dels.data.data : (dels?.data || []);
       setRows(list.map(norm));
-      setDrivers(Array.isArray(drs?.data?.data) ? drs.data.data : (drs?.data || []));
+
+      const driversList = Array.isArray(drs?.data?.data) ? drs.data.data : (drs?.data || []);
+      setDrivers(driversList);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Failed to load deliveries/drivers');
     } finally {
       setLoading(false);
     }
   }
-
   useEffect(() => { fetchPublic(); }, []);
 
-  // -------- lazy load orders (admin-only). If forbidden, disable create/edit.
-  async function ensureOrdersLoaded(currentOrderId) {
+  // ---------- lazy: load orders for the form (admin-only)
+  async function ensureOrdersLoaded(existingOrderId) {
     if (orders.length > 0 || ordersLoading) return true;
     try {
       setOrdersErr('');
       setOrdersLoading(true);
-      const r = await api.get('/orders'); // admin-only per backend
+      const r = await api.get('/orders/'); // admin-only
       const data = Array.isArray(r?.data?.data) ? r.data.data : (r?.data || []);
       setOrders(data);
       setCanManage(true);
@@ -138,9 +152,9 @@ export default function DeliveriesPage() {
       if (code === 403) {
         setCanManage(false);
         setOrdersErr('Creating/updating deliveries requires admin access (orders list is restricted).');
-        // fallback: if editing, at least allow the existing order id to show in the select
-        if (currentOrderId && !orders.find(o => String(o?.id) === String(currentOrderId))) {
-          setOrders([{ id: currentOrderId }]);
+        // fallback: preserve existing order id in the edit form
+        if (existingOrderId && !orders.find(o => String(o?.id) === String(existingOrderId))) {
+          setOrders([{ id: existingOrderId }]);
         }
       } else {
         setOrdersErr(e?.response?.data?.message || e?.message || 'Failed to load orders');
@@ -174,6 +188,7 @@ export default function DeliveriesPage() {
     return opts.sort(sortByLabel);
   }, [orders]);
 
+  // search/filter
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     let list = rows;
@@ -193,26 +208,23 @@ export default function DeliveriesPage() {
     });
   }, [rows, q, driverFilter]);
 
-  // STRICT fields: only those your backend accepts
+  // strict fields (only backend accepts these)
   const FIELDS = useMemo(() => ([
-    { name: 'order_id',  type: 'select', label: 'Order',  required: true, options: orderOptions },
+    { name: 'order_id',  type: 'select', label: ordersLoading ? 'Order (loading...)' : 'Order',  required: true, options: orderOptions },
     { name: 'driver_id', type: 'select', label: 'Driver', required: true, options: driverOptions },
-  ]), [orderOptions, driverOptions]);
+  ]), [orderOptions, driverOptions, ordersLoading]);
 
-  // sanitizer
   function sanitize(fields, payload) {
     const allow = new Set(fields.map(f => f.name));
     const out = {};
-    Object.keys(payload || {}).forEach(k => {
+    Object.entries(payload || {}).forEach(([k, v]) => {
       if (!allow.has(k)) return;
-      const v = payload[k];
       if (v === '' || v === undefined || v === null) return;
       out[k] = v;
     });
     return out;
   }
 
-  // submit
   async function handleSubmit(form) {
     try {
       setErr(''); setOk('');
@@ -221,7 +233,7 @@ export default function DeliveriesPage() {
         await api.put(`/deliveries/${editRow.id}`, body);
         setOk('Delivery updated');
       } else {
-        await api.post('/deliveries', body);
+        await api.post('/deliveries/', body);
         setOk('Delivery created');
       }
       setOpenForm(false);
@@ -244,21 +256,33 @@ export default function DeliveriesPage() {
     }
   }
 
-  // open create/edit: make sure orders are loaded (or show warning if restricted)
   async function openCreate() {
     const ok = await ensureOrdersLoaded();
-    if (!ok) return; // if completely failed, don’t open the form
+    if (!ok) return;
     setEditRow(null);
     setOpenForm(true);
   }
   async function openEdit(row) {
     const ok = await ensureOrdersLoaded(row?.order_id);
-    if (!ok) {
-      // allow editing *driver only* fallback? For now, bail out to avoid a blank select list.
-      return;
-    }
+    if (!ok) return;
     setEditRow(row);
     setOpenForm(true);
+  }
+
+  // on View: if BE didn’t include `order`, fetch it so details show properly
+  async function openView(row) {
+    const nd = norm(row);
+    if (nd.order || !nd.order_id) {
+      setInspect(nd);
+      return;
+    }
+    try {
+      const r = await api.get(`/orders/${nd.order_id}`);
+      const order = r?.data?.data ?? r?.data ?? null;
+      setInspect({ ...nd, order });
+    } catch {
+      setInspect(nd); // show what we have
+    }
   }
 
   return (
@@ -272,7 +296,6 @@ export default function DeliveriesPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* search */}
             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
               <Search size={16} className="text-slate-400" />
               <input
@@ -283,7 +306,6 @@ export default function DeliveriesPage() {
               />
             </div>
 
-            {/* filter by driver */}
             <select
               value={driverFilter}
               onChange={(e)=> setDriverFilter(e.target.value)}
@@ -295,7 +317,6 @@ export default function DeliveriesPage() {
               ))}
             </select>
 
-            {/* refresh */}
             <button
               onClick={fetchPublic}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
@@ -303,7 +324,6 @@ export default function DeliveriesPage() {
               <RefreshCw size={16} /> Refresh
             </button>
 
-            {/* new */}
             <button
               onClick={openCreate}
               disabled={!canManage}
@@ -348,7 +368,7 @@ export default function DeliveriesPage() {
               d={d}
               onEdit={openEdit}
               onDelete={handleDelete}
-              onView={(row)=> setInspect(row)}
+              onView={openView}
             />
           ))}
         </div>
@@ -359,10 +379,7 @@ export default function DeliveriesPage() {
         title={editRow ? 'Edit Delivery' : 'Create Delivery'}
         open={openForm}
         onClose={()=>{ setOpenForm(false); setEditRow(null); }}
-        fields={[
-          { name: 'order_id',  type: 'select', label: ordersLoading ? 'Order (loading...)' : 'Order',  required: true, options: orderOptions },
-          { name: 'driver_id', type: 'select', label: 'Driver', required: true, options: driverOptions },
-        ]}
+        fields={FIELDS}
         initial={editRow ? { order_id: editRow.order_id, driver_id: editRow.driver_id } : {}}
         onSubmit={handleSubmit}
       />
@@ -378,6 +395,7 @@ export default function DeliveriesPage() {
             >
               <X size={16} />
             </button>
+
             <div className="mb-4 flex items-center gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white">
                 <ClipboardList size={18} />
@@ -391,20 +409,24 @@ export default function DeliveriesPage() {
             <div className="grid gap-3 text-sm">
               <div className="rounded-xl border bg-slate-50 px-3 py-2">
                 <div className="text-[11px] uppercase tracking-wide text-slate-400">Order</div>
-                <div className="text-slate-800">
-                  #{inspect.order?.id ?? inspect.order_id ?? '—'} {inspect.order?.product?.productName ? `• ${inspect.order.product.productName}` : ''}
-                  {inspect.order?.customer?.fullname ? ` • ${inspect.order.customer.fullname}` : ''}
+                <div className="text-slate-800 flex items-center gap-2">
+                  <Badge><Hash size={12}/>#{inspect.order?.id ?? inspect.order_id ?? '—'}</Badge>
+                  <span className="truncate">
+                    {inspect.order?.product?.productName ? `• ${inspect.order.product.productName}` : ''}
+                    {inspect.order?.customer?.fullname ? ` • ${inspect.order.customer.fullname}` : ''}
+                  </span>
                 </div>
               </div>
+
               <div className="rounded-xl border bg-slate-50 px-3 py-2">
                 <div className="text-[11px] uppercase tracking-wide text-slate-400">Driver</div>
                 <div className="text-slate-800">
                   {inspect.driver?.user?.fullname || inspect.driver?.driverName || `#${inspect.driver_id ?? '—'}`}
-                  {inspect.driver?.phone ? ` • ${inspect.driver.phone}` : ''}
+                  {inspect.driver?.phoneNumber ? ` • ${inspect.driver.phoneNumber}` : ''}
                 </div>
               </div>
 
-              {(inspect.deliveryDate || inspect.deliveryStatus || inspect.deliveryAddress) && (
+              {(inspect.deliveryStatus || inspect.deliveryDate || inspect.deliveryAddress) && (
                 <div className="rounded-xl border bg-slate-50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-400">Meta</div>
                   <div className="text-slate-800 space-y-1">

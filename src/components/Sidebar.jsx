@@ -2,7 +2,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Package, Tags, Map, Boxes,
-  Truck, ClipboardList, UserCircle2, Waypoints, Scale
+  Truck, ClipboardList, UserCircle2, Waypoints, Scale, Gauge
 } from 'lucide-react';
 
 const Item = ({ to, icon: Icon, label }) => (
@@ -43,6 +43,7 @@ export default function Sidebar() {
           </div>
         </div>
 
+
         <div>
           <div className="px-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Master Data</div>
           <div className="mt-2 px-2">
@@ -63,8 +64,7 @@ export default function Sidebar() {
             <Item to="/dashboard/stock" icon={Boxes} label="Stock" />
             <Item to="/dashboard/drivers" icon={Truck} label="Drivers" />
             <Item to="/dashboard/deliveries" icon={ClipboardList} label="Deliveries" />
-            <Item to="/dashboard/coordinates" icon={Waypoints} label="Coordinates" />
-            <Item to="/dashboard/manages" icon={ClipboardList} label="Manages" />
+            <Item to="/dashboard/summary" icon={Gauge} label="Summary" />
           </div>
         </div>
       </div>

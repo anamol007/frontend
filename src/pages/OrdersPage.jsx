@@ -1,7 +1,10 @@
 // src/pages/OrdersPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../utils/api";
-import { Search, Plus, RefreshCw, Package, User2, Building2, Hash, Banknote, CalendarClock, Pencil, Trash2, BadgeCheck } from "lucide-react";
+import {
+  Search, Plus, RefreshCw, Package, User2, Building2,
+  Banknote, CalendarClock, Pencil, Trash2, BadgeCheck
+} from "lucide-react";
 import FormModal from "../components/FormModal";
 
 const STATUS_COLORS = {
@@ -15,7 +18,11 @@ const PAYMENT = ["cash", "cheque", "card", "no"];
 const STATUSES = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
 
 function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200" }) {
-  return <span className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium ${tone}`}>{children}</span>;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium ${tone}`}>
+      {children}
+    </span>
+  );
 }
 
 export default function OrdersPage() {
@@ -45,12 +52,16 @@ export default function OrdersPage() {
           api.get("/inventory/"),
           api.get("/units/"),
         ]);
-        setCustomers((c.data?.data ?? c.data ?? []).sort((a, b) => (a.fullname || "").localeCompare(b.fullname || "")));
-        setProducts((p.data?.data ?? p.data ?? []).sort((a, b) => (a.productName || "").localeCompare(b.productName || "")));
-        setInventories((i.data?.data ?? i.data ?? []).sort((a, b) => (a.inventoryName || "").localeCompare(b.inventoryName || "")));
-        setUnits((u.data?.data ?? u.data ?? []).sort((a, b) => (a.name || "").localeCompare(b.name || "")));
-      } catch (e) {
-        // not fatal for the page; form will show empty selects if this fails
+        setCustomers((c.data?.data ?? c.data ?? [])
+          .sort((a, b) => (a.fullname || "").localeCompare(b.fullname || "")));
+        setProducts((p.data?.data ?? p.data ?? [])
+          .sort((a, b) => (a.productName || "").localeCompare(b.productName || "")));
+        setInventories((i.data?.data ?? i.data ?? [])
+          .sort((a, b) => (a.inventoryName || "").localeCompare(b.inventoryName || "")));
+        setUnits((u.data?.data ?? u.data ?? [])
+          .sort((a, b) => (a.name || "").localeCompare(b.name || "")));
+      } catch {
+        // non-fatal for page render
       }
     })();
   }, []);
@@ -99,7 +110,7 @@ export default function OrdersPage() {
     { name: "orderDate",   type: "datetime-local", label: "Order Date", required: false },
   ]), [customers, products, inventories, units]);
 
-  const EDIT_FIELDS = CREATE_FIELDS; // same keys supported by PUT /orders/:id
+  const EDIT_FIELDS = CREATE_FIELDS;
 
   function sanitize(fields, payload) {
     const allow = new Set(fields.map(f => f.name));
@@ -199,10 +210,14 @@ export default function OrdersPage() {
       {/* List */}
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {[...Array(6)].map((_, i) => <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />)}
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
+          ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">No orders found.</div>
+        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
+          No orders found.
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map(o => {
@@ -211,39 +226,60 @@ export default function OrdersPage() {
             const inv  = o.inventory?.inventoryName || "—";
             const unitName = o.unit?.name || "—";
             const statusTone = STATUS_COLORS[o.status] || STATUS_COLORS.pending;
+
             return (
-              <div key={o.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
+              <div
+                key={o.id}
+                className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
+              >
+                {/* sheen */}
                 <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="bg-slate-100 text-slate-700 border-slate-200"><Hash size={12}/> #{o.id}</Badge>
+                      {/* ✅ one hash only */}
+                      <Badge tone="bg-slate-100 text-slate-700 border-slate-200">#{o.id}</Badge>
                       <Badge tone={statusTone}><BadgeCheck size={12} /> {o.status || "pending"}</Badge>
-                      <Badge tone="bg-violet-100 text-violet-700 border-violet-200"><Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}</Badge>
+                      <Badge tone="bg-violet-100 text-violet-700 border-violet-200">
+                        <Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}
+                      </Badge>
                     </div>
+
                     <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{prod}</h3>
                     <div className="mt-1 grid gap-1 text-sm text-slate-600">
-                      <div className="flex items-center gap-2"><User2 size={14} className="text-slate-400"/><span className="truncate">{cust}</span></div>
-                      <div className="flex items-center gap-2"><Building2 size={14} className="text-slate-400"/><span className="truncate">{inv}</span></div>
-                      <div className="flex items-center gap-2"><Package size={14} className="text-slate-400"/><span>{o.quantity} {unitName}</span></div>
-                      <div className="flex items-center gap-2"><CalendarClock size={14} className="text-slate-400"/><span>{new Date(o.orderDate || o.createdAt).toLocaleString()}</span></div>
+                      <div className="flex items-center gap-2">
+                        <User2 size={14} className="text-slate-400"/><span className="truncate">{cust}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Building2 size={14} className="text-slate-400"/><span className="truncate">{inv}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Package size={14} className="text-slate-400"/><span>{o.quantity} {unitName}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <CalendarClock size={14} className="text-slate-400"/>
+                        <span>{new Date(o.orderDate || o.createdAt).toLocaleString()}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-4 flex justify-end gap-2">
                   <button
-                    onClick={() => { setEditRow({
-                      id: o.id,
-                      customerId: o.customerId,
-                      productId: o.productId,
-                      inventoryId: o.inventoryId,
-                      quantity: o.quantity,
-                      unit_id: o.unit_id,
-                      status: o.status,
-                      paymentMethod: o.paymentMethod,
-                      orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
-                    }); setOpen(true); }}
+                    onClick={() => {
+                      setEditRow({
+                        id: o.id,
+                        customerId: o.customerId,
+                        productId: o.productId,
+                        inventoryId: o.inventoryId,
+                        quantity: o.quantity,
+                        unit_id: o.unit_id,
+                        status: o.status,
+                        paymentMethod: o.paymentMethod,
+                        orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
+                      });
+                      setOpen(true);
+                    }}
                     className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
                   >
                     <Pencil size={16}/> Edit
