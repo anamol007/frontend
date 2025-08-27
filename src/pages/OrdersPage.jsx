@@ -7,25 +7,6 @@ import {
 } from "lucide-react";
 import FormModal from "../components/FormModal";
 
-/* ---------- helpers ---------- */
-const ordinal = (n) => {
-  const s = ['th','st','nd','rd'], v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-};
-const prettyDateTime = (d) => {
-  if (!d) return '—';
-  const dt = new Date(d);
-  if (isNaN(dt)) return '—';
-  const M = dt.toLocaleString(undefined, { month: 'short' }); // Jan
-  const D = ordinal(dt.getDate());                             // 1st
-  const Y = dt.getFullYear();
-  const T = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return `${M} ${D}, ${Y}, ${T}`;
-};
-const money = (n) =>
-  Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/* ---------- constants ---------- */
 const STATUS_COLORS = {
   pending: "bg-amber-100 text-amber-700 border-amber-200",
   confirmed: "bg-blue-100 text-blue-700 border-blue-200",
@@ -256,16 +237,12 @@ export default function OrdersPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* ✅ one hash only */}
                       <Badge tone="bg-slate-100 text-slate-700 border-slate-200">#{o.id}</Badge>
                       <Badge tone={statusTone}><BadgeCheck size={12} /> {o.status || "pending"}</Badge>
                       <Badge tone="bg-violet-100 text-violet-700 border-violet-200">
-                        <Banknote size={12}/> {money(o.totalAmount)}
+                        <Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}
                       </Badge>
-                      {o.paymentMethod && (
-                        <Badge tone="bg-slate-100 text-slate-700 border-slate-200">
-                          {o.paymentMethod}
-                        </Badge>
-                      )}
                     </div>
 
                     <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{prod}</h3>
@@ -281,7 +258,7 @@ export default function OrdersPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <CalendarClock size={14} className="text-slate-400"/>
-                        <span>{prettyDateTime(o.orderDate || o.createdAt)}</span>
+                        <span>{new Date(o.orderDate || o.createdAt).toLocaleString()}</span>
                       </div>
                     </div>
                   </div>

@@ -1,393 +1,355 @@
-// src/pages/SummaryPage.jsx
+// src/pages/Summary.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Gauge, Package, Banknote, Layers3, RefreshCw, Download } from 'lucide-react';
+import { RefreshCw, Printer, Eye, CalendarDays } from 'lucide-react';
 import { api } from '../utils/api';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
-/* ---------------- formatting helpers ---------------- */
-const ordinal = (n) => {
-  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-};
-const prettyDate = (d) => {
-  if (!d) return '—';
-  const dt = new Date(d);
-  const M = dt.toLocaleString(undefined, { month: 'short' });
-  const D = ordinal(dt.getDate());
-  const Y = dt.getFullYear();
-  return `${M} ${D}, ${Y}`;
-};
-const money = (n) =>
-  Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/* -------------------- tiny helpers -------------------- */
+const fmtInt = (n) => (Number.isFinite(n) ? n.toLocaleString() : '0');
+const fmtMoney = (n) =>
+  Number.isFinite(n) ? n.toLocaleString(undefined, { style: 'currency', currency: 'USD' }) : '$0.00';
 
-/* ---------------- PDF (simple A4 report) ---------------- */
-function exportPDF({ periodLabel, scopeLabel, range, totals, topProducts, inventories }) {
-  const doc = new jsPDF({ unit: 'pt' });
-  let y = 40;
+function buildReceiptHTML(summary, { period, range, asOf, title }) {
+  // summary: { inventories: [...] } from API
+  const style = `
+  <style>
+    @page { size: A4; margin: 16mm; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; color:#111827; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 16px 0 8px; }
+    .muted { color:#6B7280; font-size: 12px; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 10px 0 18px; }
+    .card { border:1px solid #E5E7EB; border-radius: 10px; padding: 10px 12px; }
+    .label { color:#6B7280; font-size: 12px; text-transform: uppercase; letter-spacing:.04em; }
+    .value { font-weight: 700; font-size: 20px; margin-top: 6px; }
+    table { width:100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { border:1px solid #E5E7EB; padding: 8px 10px; font-size: 12px; }
+    th { background:#F9FAFB; text-align: left; color:#374151; }
+    .inv { margin: 18px 0 10px; border-top:2px solid #F3F4F6; padding-top: 12px; }
+    .footer { margin-top: 16px; font-size: 11px; color:#6B7280; }
+  </style>`;
 
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-  doc.text('Inventory Summary', 40, y); y += 22;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
-  doc.text(`Scope: ${scopeLabel}`, 40, y); y += 16;
-  doc.text(`Period: ${periodLabel} (${prettyDate(range.start)} — ${prettyDate(range.end)})`, 40, y); y += 20;
+  const sections = (summary.inventories || []).map((inv) => {
+    const orders = inv?.sales?.totals?.orders ?? 0;
+    const items = inv?.sales?.totals?.quantity ?? 0;
+    const revenue = inv?.sales?.totals?.revenue ?? 0;
+    const stockQty = inv?.stock?.totals?.totalQuantity ?? 0;
+    const stockItems = inv?.stock?.totals?.items ?? 0;
 
-  // Totals
-  autoTable(doc, {
-    startY: y,
-    head: [['Metric', 'Value']],
-    body: [
-      ['Orders', String(totals.orders)],
-      ['Qty Sold', String(totals.qty)],
-      ['Revenue', `₨ ${money(totals.revenue)}`],
-      ['Stock Items', String(totals.stockItems)],
-      ['Stock Quantity', String(totals.stockQty)],
-    ],
-    styles: { fontSize: 10, cellPadding: 6 },
-    headStyles: { fillColor: [17, 24, 39] },
-    theme: 'striped',
-    margin: { left: 40, right: 40 },
+    const salesRows = (inv?.sales?.byProduct || [])
+      .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+      .slice(0, 12)
+      .map(
+        (r) => `<tr>
+          <td>${r.productName || `#${r.productId}`}</td>
+          <td>${r?.unit?.name || ''}</td>
+          <td style="text-align:right">${fmtInt(r.quantitySold || 0)}</td>
+          <td style="text-align:right">${fmtMoney(r.revenue || 0)}</td>
+        </tr>`
+      )
+      .join('');
+
+    const stockRows = (inv?.stock?.byProduct || [])
+      .sort((a, b) => (b.stockQuantity ?? 0) - (a.stockQuantity ?? 0))
+      .slice(0, 12)
+      .map(
+        (r) => `<tr>
+          <td>${r.productName || `#${r.productId}`}</td>
+          <td>${r?.unit?.name || ''}</td>
+          <td style="text-align:right">${fmtInt(r.stockQuantity || 0)}</td>
+        </tr>`
+      )
+      .join('');
+
+    return `
+      <div class="inv">
+        <h2>${inv.inventoryName || `Inventory ${inv.inventoryId}`}</h2>
+        <div class="kpis">
+          <div class="card"><div class="label">Orders</div><div class="value">${fmtInt(orders)}</div></div>
+          <div class="card"><div class="label">Items sold</div><div class="value">${fmtInt(items)}</div></div>
+          <div class="card"><div class="label">Revenue</div><div class="value">${fmtMoney(revenue)}</div></div>
+          <div class="card"><div class="label">Stock (qty / items)</div><div class="value">${fmtInt(stockQty)} / ${fmtInt(
+      stockItems
+    )}</div></div>
+        </div>
+
+        <div>
+          <div class="label" style="margin:8px 0 4px">Top sales</div>
+          <table>
+            <thead><tr><th>Product</th><th>Unit</th><th style="text-align:right">Qty</th><th style="text-align:right">Revenue</th></tr></thead>
+            <tbody>${salesRows || `<tr><td colspan="4" class="muted">No sales</td></tr>`}</tbody>
+          </table>
+        </div>
+
+        <div>
+          <div class="label" style="margin:12px 0 4px">Stock snapshot</div>
+          <table>
+            <thead><tr><th>Product</th><th>Unit</th><th style="text-align:right">Qty</th></tr></thead>
+            <tbody>${stockRows || `<tr><td colspan="3" class="muted">No stock</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>`;
   });
-  y = doc.lastAutoTable.finalY + 16;
 
-  // Top products
-  if (topProducts.length) {
-    autoTable(doc, {
-      startY: y,
-      head: [['Top Products', 'Qty', 'Unit', 'Revenue']],
-      body: topProducts.map(p => [p.name, p.qty, p.unit || '', `₨ ${money(p.revenue)}`]),
-      styles: { fontSize: 10, cellPadding: 6 },
-      headStyles: { fillColor: [30, 64, 175] },
-      theme: 'striped',
-      margin: { left: 40, right: 40 },
-    });
-    y = doc.lastAutoTable.finalY + 16;
-  }
-
-  // Per-inventory brief
-  inventories.forEach((inv) => {
-    autoTable(doc, {
-      startY: y,
-      head: [[`${inv.inventoryName}`, 'Orders', 'Qty', 'Revenue', 'Stock Items', 'Stock Qty']],
-      body: [[
-        '',
-        String(inv.sales.totals.orders || 0),
-        String(inv.sales.totals.quantity || 0),
-        `₨ ${money(inv.sales.totals.revenue || 0)}`,
-        String(inv.stock.totals.items || 0),
-        String(inv.stock.totals.totalQuantity || 0),
-      ]],
-      styles: { fontSize: 10, cellPadding: 6 },
-      headStyles: { fillColor: [16, 185, 129] },
-      theme: 'plain',
-      margin: { left: 40, right: 40 },
-    });
-    y = doc.lastAutoTable.finalY + 10;
-  });
-
-  doc.save(`summary_${Date.now()}.pdf`);
+  return `
+  <!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>${title || 'Inventory Summary'}</title>
+      ${style}
+    </head>
+    <body>
+      <div>
+        <h1>${title || 'Inventory Summary'}</h1>
+        <div class="muted">Period: ${period.toUpperCase()} • Range: ${range?.start?.slice(0,10)} → ${range?.end?.slice(0,10)} • Generated: ${asOf}</div>
+        ${sections.join('')}
+        <div class="footer">© ${(new Date()).getFullYear()} — Generated by Inventory Console</div>
+      </div>
+      <script>window.focus && window.focus();</script>
+    </body>
+  </html>`;
 }
 
-/* ---------------- UI helpers ---------------- */
-function Stat({ icon: Icon, label, value, sub }) {
+/* -------------------- simple modal -------------------- */
+function Modal({ open, title, onClose, children }) {
+  if (!open) return null;
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
-      <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white">
-          <Icon size={18} />
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-black/40 p-4">
+      <div className="w-full max-w-5xl rounded-2xl bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <div className="text-lg font-semibold text-slate-900">{title}</div>
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+          >
+            Close
+          </button>
         </div>
-        <div>
-          <div className="text-xs uppercase tracking-wide text-slate-400">{label}</div>
-          <div className="text-lg font-semibold text-slate-900">{value}</div>
-          {sub && <div className="text-xs text-slate-500">{sub}</div>}
-        </div>
+        <div className="h-[70vh] overflow-hidden">{children}</div>
       </div>
     </div>
   );
 }
 
-function Panel({ title, children }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
-      <div className="mb-2 text-sm font-semibold text-slate-900">{title}</div>
-      {children}
-    </div>
-  );
-}
-
-export default function SummaryPage() {
-  const [period, setPeriod] = useState('monthly');         // daily | weekly | monthly | yearly | all
-  const [selectedInvId, setSelectedInvId] = useState('all');
-  const [data, setData] = useState(null);                  // API response .data
-  const [loading, setLoading] = useState(true);
+/* -------------------- page -------------------- */
+export default function Summary() {
+  const [period, setPeriod] = useState('monthly');
+  const [inventoryId, setInventoryId] = useState('');
+  const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const inventories = data?.inventories || [];
+  // preview modal
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState('');
 
-  // Build inventory options from the response itself
-  const invOptions = useMemo(() => {
-    const opts = inventories.map(i => ({ value: i.inventoryId, label: i.inventoryName }));
-    // keep selected if present even when filtered to single
-    const hasSel = selectedInvId !== 'all' && !opts.some(o => String(o.value) === String(selectedInvId));
-    return hasSel ? [{ value: selectedInvId, label: `Inventory #${selectedInvId}` }, ...opts] : opts;
-  }, [inventories, selectedInvId]);
-
-  // Fetch summary from backend summary controller
   async function fetchSummary() {
     try {
-      setLoading(true); setErr('');
-      const params = { period };
-      if (selectedInvId !== 'all') params.inventoryId = selectedInvId;
-      const res = await api.get('/summary', { params });
-      setData(res?.data?.data || null);
+      setLoading(true);
+      setErr('');
+      const res = await api.get('/summary', {
+        params: { period, ...(inventoryId ? { inventoryId } : {}) },
+      });
+      const payload = res?.data?.data || res?.data || {};
+      setData(payload);
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Failed to load summary');
+      setErr(e?.response?.data?.message || e?.message || 'Error fetching summary');
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { fetchSummary(); /* eslint-disable-next-line */ }, [period, selectedInvId]);
+  useEffect(() => {
+    fetchSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, inventoryId]);
 
-  // Derived labels
-  const periodLabel = useMemo(() => {
-    switch (period) {
-      case 'daily': return 'Today';
-      case 'weekly': return 'This week';
-      case 'monthly': return 'This month';
-      case 'yearly': return 'This year';
-      case 'all': return 'All time';
-      default: return period;
-    }
-  }, [period]);
+  const allInventories = useMemo(() => {
+    return (data?.inventories || []).map((i) => ({
+      value: i.inventoryId,
+      label: i.inventoryName || `Inventory ${i.inventoryId}`,
+    }));
+  }, [data]);
 
-  const scopeLabel = useMemo(() => {
-    if (selectedInvId === 'all') return 'All accessible inventories';
-    const found = inventories.find(i => String(i.inventoryId) === String(selectedInvId));
-    return found?.inventoryName || `Inventory #${selectedInvId}`;
-  }, [selectedInvId, inventories]);
-
-  // Aggregate totals across returned inventories
   const totals = useMemo(() => {
-    const t = { orders: 0, qty: 0, revenue: 0, stockItems: 0, stockQty: 0 };
-    inventories.forEach(inv => {
-      t.orders += Number(inv?.sales?.totals?.orders || 0);
-      t.qty += Number(inv?.sales?.totals?.quantity || 0);
-      t.revenue += Number(inv?.sales?.totals?.revenue || 0);
-      t.stockItems += Number(inv?.stock?.totals?.items || 0);
-      t.stockQty += Number(inv?.stock?.totals?.totalQuantity || 0);
+    const invs = data?.inventories || [];
+    let orders = 0,
+      items = 0,
+      revenue = 0,
+      stockQty = 0,
+      stockItems = 0;
+    invs.forEach((inv) => {
+      orders += inv?.sales?.totals?.orders || 0;
+      items += inv?.sales?.totals?.quantity || 0;
+      revenue += inv?.sales?.totals?.revenue || 0;
+      stockQty += inv?.stock?.totals?.totalQuantity || 0;
+      stockItems += inv?.stock?.totals?.items || 0;
     });
-    return t;
-  }, [inventories]);
+    return { orders, items, revenue, stockQty, stockItems };
+  }, [data]);
 
-  // Top products across inventories (sum by product+unit)
-  const topProducts = useMemo(() => {
-    const map = new Map();
-    inventories.forEach(inv => {
-      (inv?.sales?.byProduct || []).forEach(p => {
-        const key = `${p.productId}__${p.unit?.id || ''}`;
-        const cur = map.get(key) || { name: p.productName, unit: p.unit?.name, qty: 0, revenue: 0 };
-        cur.qty += Number(p.quantitySold || 0);
-        cur.revenue += Number(p.revenue || 0);
-        map.set(key, cur);
-      });
+  function handlePreview() {
+    const html = buildReceiptHTML(data || { inventories: [] }, {
+      period,
+      range: data?.range,
+      asOf: new Date().toLocaleString(),
+      title: 'Inventory Summary',
     });
-    return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue).slice(0, 6);
-  }, [inventories]);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+    setPreviewOpen(true);
+  }
+
+  function handlePrint() {
+    const html = buildReceiptHTML(data || { inventories: [] }, {
+      period,
+      range: data?.range,
+      asOf: new Date().toLocaleString(),
+      title: 'Inventory Summary',
+    });
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    // give it a tick to layout before printing
+    setTimeout(() => { try { w.print(); } catch {} finally { /* keep tab so user can reprint if needed */ } }, 250);
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-5">
+      {/* header / controls */}
       <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="flex items-center gap-2 text-2xl font-semibold text-slate-900">
-              <Gauge size={20}/> Summary
-            </h1>
+            <h1 className="text-2xl font-semibold text-slate-900">Summary</h1>
             <p className="text-sm text-slate-500">
-              {scopeLabel} • {periodLabel}
-              {data?.range && ` • ${prettyDate(data.range.start)} – ${prettyDate(data.range.end)}`}
+              Uses only <code className="rounded bg-slate-100 px-1.5 py-0.5">/summary</code>. Preview or print a receipt of the KPIs and tables.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={period}
-              onChange={(e)=> setPeriod(e.target.value)}
-              className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
-            >
-              <option value="daily">Today</option>
-              <option value="weekly">This week</option>
-              <option value="monthly">This month</option>
-              <option value="yearly">This year</option>
-              <option value="all">All time</option>
-            </select>
+            <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm">
+              <CalendarDays size={16} className="text-slate-400" />
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="bg-transparent outline-none"
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
 
             <select
-              value={selectedInvId}
-              onChange={(e)=> setSelectedInvId(e.target.value)}
+              value={inventoryId}
+              onChange={(e) => setInventoryId(e.target.value)}
               className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
             >
-              <option value="all">All inventories</option>
-              {invOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              <option value="">All inventories</option>
+              {allInventories.map((i) => (
+                <option key={i.value} value={i.value}>
+                  {i.label}
+                </option>
+              ))}
             </select>
 
             <button
               onClick={fetchSummary}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
             >
-              <RefreshCw size={16}/> Refresh
+              <RefreshCw size={16} /> Refresh
             </button>
 
             <button
-              onClick={() => exportPDF({
-                periodLabel,
-                scopeLabel,
-                range: data?.range || { start: new Date(), end: new Date() },
-                totals,
-                topProducts,
-                inventories,
-              })}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+              onClick={handlePreview}
+              disabled={!data || (data?.inventories || []).length === 0}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-60"
             >
-              <Download size={16}/> Download PDF
+              <Eye size={16} /> Preview
+            </button>
+
+            <button
+              onClick={handlePrint}
+              disabled={!data || (data?.inventories || []).length === 0}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700 disabled:opacity-60"
+            >
+              <Printer size={16} /> Print
             </button>
           </div>
         </div>
 
-        {err && (
+        {(err || (!loading && !data)) && (
           <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
-            {err}
+            {err || 'Error loading summary'}
           </div>
         )}
       </div>
 
-      {/* Overall stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat icon={Package} label="Orders" value={totals.orders} sub={`${periodLabel}`} />
-        <Stat icon={Package} label="Qty Sold" value={totals.qty} sub="All products" />
-        <Stat icon={Banknote} label="Revenue" value={`₨ ${money(totals.revenue)}`} sub={periodLabel} />
-        <Stat icon={Layers3} label="Stock Items" value={totals.stockItems} sub={`Qty: ${totals.stockQty}`} />
+      {/* KPI cards */}
+      <div className="grid gap-4 md:grid-cols-4">
+        {[
+          { label: 'Orders', value: fmtInt(totals.orders) },
+          { label: 'Items sold', value: fmtInt(totals.items) },
+          { label: 'Revenue', value: fmtMoney(totals.revenue) },
+          { label: 'Stock (qty / items)', value: `${fmtInt(totals.stockQty)} / ${fmtInt(totals.stockItems)}` },
+        ].map((k) => (
+          <div key={k.label} className="rounded-2xl border border-slate-200 bg-white/70 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{k.label}</div>
+            <div className="mt-2 text-3xl font-bold text-slate-900">{k.value}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Content */}
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="h-44 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
-          <div className="h-44 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
+      {/* inventories list (simple, keeps layout light) */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70">
+        <div className="grid grid-cols-[1.2fr_.8fr_.8fr_.8fr_.8fr] items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <span>Inventory</span>
+          <span>Orders</span>
+          <span>Items</span>
+          <span>Revenue</span>
+          <span>Stock (qty / items)</span>
         </div>
-      ) : inventories.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
-          No data for the selected scope/period.
-        </div>
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {/* Top products */}
-          <Panel title="Top products (by revenue)">
-            {topProducts.length === 0 ? (
-              <div className="grid place-items-center rounded-xl border border-slate-200 bg-slate-50/60 p-6 text-sm text-slate-500">
-                No sales in this period.
-              </div>
-            ) : (
-              <ul className="divide-y divide-slate-200">
-                {topProducts.map((p, i) => (
-                  <li key={i} className="flex items-center justify-between py-2">
-                    <div className="min-w-0">
-                      <div className="font-medium text-slate-800">{p.name}</div>
-                      <div className="text-xs text-slate-500">{p.qty} {p.unit || ''}</div>
-                    </div>
-                    <div className="text-sm font-semibold text-slate-900">₨ {money(p.revenue)}</div>
-                  </li>
-                ))}
-              </ul>
+
+        {loading ? (
+          <div className="p-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="mb-2 h-12 animate-pulse rounded-xl border border-slate-200 bg-white/60" />
+            ))}
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-200">
+            {(data?.inventories || []).map((inv) => (
+              <li key={inv.inventoryId} className="grid grid-cols-[1.2fr_.8fr_.8fr_.8fr_.8fr] items-center gap-3 px-4 py-3">
+                <div className="font-medium text-slate-900">{inv.inventoryName || `Inventory ${inv.inventoryId}`}</div>
+                <div>{fmtInt(inv?.sales?.totals?.orders || 0)}</div>
+                <div>{fmtInt(inv?.sales?.totals?.quantity || 0)}</div>
+                <div>{fmtMoney(inv?.sales?.totals?.revenue || 0)}</div>
+                <div>
+                  {fmtInt(inv?.stock?.totals?.totalQuantity || 0)} / {fmtInt(inv?.stock?.totals?.items || 0)}
+                </div>
+              </li>
+            ))}
+            {(data?.inventories || []).length === 0 && (
+              <li className="px-4 py-6 text-center text-slate-500">No data for this selection.</li>
             )}
-          </Panel>
+          </ul>
+        )}
+      </div>
 
-          {/* Per-inventory breakdown */}
-          <Panel title="Per-inventory breakdown">
-            <div className="space-y-3">
-              {inventories.map((inv) => (
-                <details key={inv.inventoryId} className="rounded-xl border border-slate-200 bg-white/60 p-3">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-semibold text-slate-900">{inv.inventoryName}</div>
-                      <div className="text-xs text-slate-500">
-                        Orders {inv.sales.totals.orders || 0} • Qty {inv.sales.totals.quantity || 0} • Revenue ₨ {money(inv.sales.totals.revenue || 0)}
-                        {' '}• Stock Items {inv.stock.totals.items || 0}
-                      </div>
-                    </div>
-                    <span className="text-slate-400">▼</span>
-                  </summary>
-
-                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                    {/* Sales table */}
-                    <div className="rounded-lg border border-slate-200">
-                      <div className="px-3 py-2 text-sm font-medium text-slate-700">Sales (by product)</div>
-                      <div className="max-h-64 overflow-auto">
-                        <table className="w-full border-t border-slate-100 text-sm">
-                          <thead className="bg-slate-50 sticky top-0">
-                            <tr className="[&>th]:px-3 [&>th]:py-2 text-left text-slate-500">
-                              <th>Product</th>
-                              <th className="text-right">Qty</th>
-                              <th>Unit</th>
-                              <th className="text-right">Orders</th>
-                              <th className="text-right">Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(inv.sales.byProduct || []).map((p) => (
-                              <tr key={`${p.productId}-${p.unit?.id || ''}`} className="[&>td]:px-3 [&>td]:py-2 border-t">
-                                <td className="truncate">{p.productName}</td>
-                                <td className="text-right">{p.quantitySold}</td>
-                                <td>{p.unit?.name || ''}</td>
-                                <td className="text-right">{p.orders}</td>
-                                <td className="text-right">₨ {money(p.revenue)}</td>
-                              </tr>
-                            ))}
-                            {(!inv.sales.byProduct || inv.sales.byProduct.length === 0) && (
-                              <tr><td className="px-3 py-3 text-slate-500 text-sm" colSpan={5}>No sales.</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* Stock table */}
-                    <div className="rounded-lg border border-slate-200">
-                      <div className="px-3 py-2 text-sm font-medium text-slate-700">
-                        Stock snapshot • {prettyDate(inv.stock.snapshotAt)}
-                      </div>
-                      <div className="max-h-64 overflow-auto">
-                        <table className="w-full border-t border-slate-100 text-sm">
-                          <thead className="bg-slate-50 sticky top-0">
-                            <tr className="[&>th]:px-3 [&>th]:py-2 text-left text-slate-500">
-                              <th>Product</th>
-                              <th className="text-right">Qty</th>
-                              <th>Unit</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(inv.stock.byProduct || []).map((s) => (
-                              <tr key={`${s.productId}-${s.unit?.id || ''}`} className="[&>td]:px-3 [&>td]:py-2 border-t">
-                                <td className="truncate">{s.productName}</td>
-                                <td className="text-right">{s.stockQuantity}</td>
-                                <td>{s.unit?.name || ''}</td>
-                              </tr>
-                            ))}
-                            {(!inv.stock.byProduct || inv.stock.byProduct.length === 0) && (
-                              <tr><td className="px-3 py-3 text-slate-500 text-sm" colSpan={3}>No stock.</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-              ))}
-            </div>
-          </Panel>
-        </div>
-      )}
+      {/* Preview modal */}
+      <Modal open={previewOpen} title="Print Preview" onClose={() => setPreviewOpen(false)}>
+        {previewUrl ? (
+          <iframe title="preview" src={previewUrl} className="h-full w-full" />
+        ) : (
+          <div className="grid h-full place-items-center text-slate-500">Preparing preview…</div>
+        )}
+      </Modal>
     </div>
   );
 }

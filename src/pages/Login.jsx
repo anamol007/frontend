@@ -1,36 +1,175 @@
 // src/pages/Login.jsx
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../utils/api';
+import { login as loginApi, api } from '../utils/api';
 import { Eye, EyeOff, Shield, Mail, Lock } from 'lucide-react';
+import gsap from 'gsap';
+
+function extractAuth(payload) {
+  const p = payload?.data ?? payload ?? {};
+  const token =
+    p.token ||
+    p.accessToken ||
+    p.jwt ||
+    p?.data?.token ||
+    p?.data?.accessToken ||
+    p?.data?.jwt ||
+    null;
+  const user =
+    p.user ||
+    p?.data?.user ||
+    (p.user === undefined && p?.data && typeof p.data === 'object' ? p.data : null);
+  return { token, user };
+}
 
 export default function Login() {
   const nav = useNavigate();
+  const rootRef = useRef(null);
+  const stageRef = useRef(null);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // GSAP animations
+  useLayoutEffect(() => {
+    const ctx = gsap.context(() => {
+      // entrance
+      gsap.from('.login-card', { y: 16, opacity: 0, duration: 0.6, ease: 'power2.out' });
+      gsap.from('.art-stage', { opacity: 0, duration: 0.8, ease: 'power2.out' });
+
+      // subtle background gradient drift via CSS variables
+      gsap.to('.bg-clouds', {
+        duration: 10,
+        '--g1x': '12%',
+        '--g2x': '98%',
+        '--g3y': '118%',
+        ease: 'sine.inOut',
+        yoyo: true,
+        repeat: -1,
+      });
+
+      // looping floaty motions
+      gsap.to('.blob', {
+        x: () => gsap.utils.random(-18, 18),
+        y: () => gsap.utils.random(-24, 24),
+        rotate: () => gsap.utils.random(-6, 6),
+        scale: () => gsap.utils.random(0.96, 1.04),
+        duration: () => gsap.utils.random(6, 10),
+        yoyo: true,
+        repeat: -1,
+        ease: 'sine.inOut',
+        stagger: 0.2,
+      });
+
+      gsap.to('.orb', {
+        y: 20,
+        x: -10,
+        duration: 7,
+        yoyo: true,
+        repeat: -1,
+        ease: 'sine.inOut',
+      });
+
+      gsap.to('.chip', {
+        y: -10,
+        x: 10,
+        duration: 8,
+        yoyo: true,
+        repeat: -1,
+        ease: 'sine.inOut',
+      });
+
+      gsap.to('.ring', {
+        rotate: 360,
+        duration: 40,
+        repeat: -1,
+        ease: 'none',
+      });
+
+      // sparkle twinkles
+      gsap.to('.sparkle', {
+        opacity: () => gsap.utils.random(0.2, 0.9),
+        scale: () => gsap.utils.random(0.8, 1.4),
+        duration: () => gsap.utils.random(1.2, 2.4),
+        repeat: -1,
+        yoyo: true,
+        ease: 'sine.inOut',
+        stagger: { each: 0.12, from: 'random' },
+      });
+    }, rootRef);
+    return () => ctx.revert();
+  }, []);
+
+  // Parallax follow on mouse/touch
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const move = (clientX, clientY) => {
+      const r = el.getBoundingClientRect();
+      const dx = (clientX - r.left) / r.width - 0.5;
+      const dy = (clientY - r.top) / r.height - 0.5;
+      gsap.to('.parallax', {
+        x: dx * 24,
+        y: dy * 24,
+        rotate: dx * 6,
+        duration: 0.6,
+        overwrite: 'auto',
+        ease: 'sine.out',
+      });
+    };
+    const onMouse = (e) => move(e.clientX, e.clientY);
+    const onTouch = (e) => {
+      const t = e.touches?.[0];
+      if (t) move(t.clientX, t.clientY);
+    };
+    el.addEventListener('mousemove', onMouse);
+    el.addEventListener('touchmove', onTouch, { passive: true });
+    return () => {
+      el.removeEventListener('mousemove', onMouse);
+      el.removeEventListener('touchmove', onTouch);
+    };
+  }, []);
+
   async function onSubmit(e) {
     e.preventDefault();
     setErr('');
     setLoading(true);
     try {
-      await login({ email, password });
-      nav('/dashboard', { replace: true });
+      const res = await loginApi({ email, password });
+      const { token, user } = extractAuth(res);
+
+      if (token) {
+        try {
+          localStorage.setItem('token', token);
+          localStorage.setItem('accessToken', token);
+        } catch {}
+      }
+      if (user) {
+        try {
+          localStorage.setItem('user', JSON.stringify(user));
+        } catch {}
+      }
+
+      // warm session for cookie-based auth (ignored if token-only)
+      try { await api.get('/auth/me'); } catch {}
+
+      // hard redirect avoids guard race conditions
+      window.location.replace('/dashboard');
     } catch (e2) {
-      setErr(e2?.message || 'Error during login');
+      setErr(e2?.response?.data?.message || e2?.message || 'Error during login');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen grid md:grid-cols-2 bg-slate-50">
+    <div ref={rootRef} className="min-h-screen grid md:grid-cols-2 bg-slate-50">
       {/* LEFT: form */}
       <div className="relative flex items-center justify-center p-8 md:p-14">
-        <div className="w-full max-w-md">
+        <div className="login-card w-full max-w-md">
           {/* tiny brand */}
           <div className="mb-8 flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-indigo-600 text-white grid place-items-center shadow-lg">
@@ -98,29 +237,51 @@ export default function Login() {
             </button>
           </form>
 
-          {/* subtle footer */}
           <p className="mt-6 text-sm text-slate-500">
             By continuing you agree to our terms & privacy policy.
           </p>
         </div>
       </div>
 
-      {/* RIGHT: animated visual */}
-      <div className="relative hidden md:block overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(60%_40%_at_20%_-10%,rgba(99,102,241,.35),transparent),radial-gradient(60%_50%_at_100%_0%,rgba(16,185,129,.25),transparent),radial-gradient(80%_60%_at_50%_120%,rgba(139,92,246,.25),transparent)]" />
-        <div className="absolute inset-0">
-          {/* floating shapes */}
-          <div className="absolute left-16 top-24 h-24 w-24 rounded-3xl bg-white/60 backdrop-blur shadow-2xl animate-[float_9s_ease-in-out_infinite]" />
-          <div className="absolute right-16 top-40 h-28 w-28 rounded-full bg-white/50 backdrop-blur shadow-xl animate-[float_7s_ease-in-out_infinite]" />
-          <div className="absolute left-24 bottom-24 h-40 w-40 rotate-12 rounded-2xl bg-white/40 backdrop-blur shadow-xl animate-[float_11s_ease-in-out_infinite]" />
+      {/* RIGHT: GSAP animated visual */}
+      <div ref={stageRef} className="relative hidden md:block overflow-hidden">
+        {/* subtle multi-radial backdrop with animatable CSS vars */}
+        <div
+          className="bg-clouds absolute inset-0"
+          style={{
+            '--g1x': '20%',
+            '--g2x': '100%',
+            '--g3y': '120%',
+            background:
+              'radial-gradient(60% 40% at var(--g1x) -10%, rgba(99,102,241,0.35), transparent),' +
+              'radial-gradient(60% 50% at var(--g2x) 0%, rgba(16,185,129,0.25), transparent),' +
+              'radial-gradient(80% 60% at 50% var(--g3y), rgba(139,92,246,0.25), transparent)',
+          }}
+        />
+
+        <div className="art-stage absolute inset-0">
+          {/* Glassy blobs */}
+          <div className="parallax blob absolute left-16 top-20 h-40 w-40 rounded-[2rem] bg-white/35 backdrop-blur-xl shadow-2xl ring-1 ring-white/30" />
+          <div className="parallax blob absolute right-16 top-32 h-28 w-28 rounded-full bg-white/30 backdrop-blur-xl shadow-xl ring-1 ring-white/30" />
+          <div className="parallax blob absolute left-24 bottom-24 h-44 w-44 rotate-12 rounded-3xl bg-white/25 backdrop-blur-xl shadow-xl ring-1 ring-white/30" />
+
+          {/* Orbiting ring */}
+          <div className="parallax ring absolute right-24 bottom-24 h-48 w-48 rounded-full border border-white/30" />
+          <div className="parallax chip absolute right-28 bottom-36 h-2 w-40 rounded-full bg-white/60 backdrop-blur-md shadow" />
+
+          {/* Sparkles */}
+          {Array.from({ length: 16 }).map((_, i) => (
+            <div
+              key={i}
+              className="sparkle absolute h-1.5 w-1.5 rounded-full bg-white/70 shadow"
+              style={{
+                left: `${10 + (i * 5.7) % 80}%`,
+                top: `${12 + (i * 7.3) % 75}%`,
+                opacity: 0.4,
+              }}
+            />
+          ))}
         </div>
-        <style>{`
-          @keyframes float {
-            0%   { transform: translateY(0px) }
-            50%  { transform: translateY(-16px) }
-            100% { transform: translateY(0px) }
-          }
-        `}</style>
       </div>
     </div>
   );

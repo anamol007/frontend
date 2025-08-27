@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Boxes, ChevronRight, ChevronDown, Search, Plus, RefreshCw,
-  Pencil, Trash2, Building2, Package2, Layers, CheckCircle2, XCircle
+  Pencil, Trash2, Building2, Layers
 } from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
@@ -19,26 +19,64 @@ const prettyDateTime = (d) => {
   return `${M} ${D}, ${Y}, ${T}`;
 };
 
-/* Defensive normalizer for stocks embedded under products */
-const normStock = (s = {}) => ({
-  id: s.id ?? s.ID ?? null,
-  product_id: s.product_id ?? s.productId ?? s.product?.id ?? null,
-  inventory_id: s.inventory_id ?? s.inventoryId ?? s.inventory?.id ?? null,
-  unit_id: s.unit_id ?? s.unitId ?? s.unit?.id ?? null,
-  stockQuantity: Number(s.stockQuantity ?? s.qty ?? 0),
-  productName: s.product?.productName ?? s.productName ?? '',
-  inventoryName: s.inventory?.inventoryName ?? s.inventoryName ?? '',
-  unitName: s.unit?.name ?? s.unitName ?? '',
-  updatedAt: s.updatedAt ?? s.createdAt ?? null,
-});
+/** Normalize one aggregated row returned by GET /stock */
+const normAgg = (row = {}) => {
+  // safer accessors
+  const pid  = row.product_id  ?? (row.product?.id  ?? null);
+  const iid  = row.inventory_id?? (row.inventory?.id?? null);
+  const uid  = row.unit_id     ?? (row.unit?.id     ?? null);
+
+  // available quantity from aggregation
+  const avail = Number(
+    row.availableQuantity ??
+    row.totalAvailableQuantity ??
+    row.stockQuantity ?? 0
+  );
+
+  return {
+    key: `${(pid ?? 'p')}-${(iid ?? 'i')}-${(uid ?? 'u')}`,
+    product_id: pid,
+    inventory_id: iid,
+    unit_id: uid,
+    productName: row.product?.productName ?? row.productName ?? `#${pid ?? ''}`,
+    inventoryName: row.inventory?.inventoryName ?? row.inventoryName ?? `#${iid ?? ''}`,
+    unitName: row.unit?.name ?? row.unitName ?? `#${uid ?? ''}`,
+    stockQuantity: avail,
+    updatedAt: row.updatedAt ?? row.lastUpdated ?? null,
+  };
+};
+
+/** Build distinct options from aggregated list for new stock modal */
+const buildSelects = (rows=[]) => {
+  const products = new Map();
+  const inventories = new Map();
+  const units = new Map();
+  rows.forEach(r => {
+    if (r.product_id && !products.has(r.product_id))
+      products.set(r.product_id, { value: r.product_id, label: r.productName });
+    if (r.inventory_id && !inventories.has(r.inventory_id))
+      inventories.set(r.inventory_id, { value: r.inventory_id, label: r.inventoryName });
+    if (r.unit_id && !units.has(r.unit_id))
+      units.set(r.unit_id, { value: r.unit_id, label: r.unitName });
+  });
+  return {
+    productOptions: Array.from(products.values()),
+    inventoryOptions: Array.from(inventories.values()),
+    unitOptions: Array.from(units.values()),
+  };
+};
+
+// If your DB requires a specific "method" value, adjust here.
+// Example choices:
+//   - STRING enum: 'manual' | 'transfer' | 'adjust'
+//   - NUM code: 0 | 1 | 2
+const METHOD_FOR_CREATE = undefined; // e.g. 'manual' or 0
+const METHOD_FOR_ADJUST = undefined; // e.g. 'adjust' or 2
 
 export default function StockPage() {
-  // data
-  const [products, setProducts] = useState([]);
-  const [inventories, setInventories] = useState([]);
-  const [units, setUnits] = useState([]);
-
-  // ui
+  // aggregated stock rows
+  const [rows, setRows] = useState([]);
+  // UI state
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
@@ -48,150 +86,134 @@ export default function StockPage() {
   const [invFilter, setInvFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
 
-  // expansion state (product ids)
-  const [openIds, setOpenIds] = useState(new Set());
+  // expansion state (product ids grouped)
+  const [openKeys, setOpenKeys] = useState(new Set());
 
-  // modal
+  // modal state
   const [modalOpen, setModalOpen] = useState(false);
-  const [editRow, setEditRow] = useState(null); // stock row or null (for create)
-  const [prefillProductId, setPrefillProductId] = useState(null); // for "Add stock" under a product
+  const [editRow, setEditRow] = useState(null);     // aggregated row (for Edit)
+  const [prefill, setPrefill] = useState(null);     // for "New Stock" quick-fill
 
   async function fetchAll() {
     try {
       setLoading(true); setErr(''); setOk('');
-      const [p, i, u] = await Promise.all([
-        api.get('/products/'),
-        api.get('/inventory/'),
-        api.get('/units/'),
-      ]);
-      const productsData = Array.isArray(p?.data?.data) ? p.data.data : (p?.data || []);
-      const invData = Array.isArray(i?.data?.data) ? i.data.data : (i?.data || []);
-      const unitData = Array.isArray(u?.data?.data) ? u.data.data : (u?.data || []);
-
+      // Uses your /stock (getAllStock) endpoint that returns aggregated quantities with includes
+      const r = await api.get('/stock/');
+      const list = Array.isArray(r?.data?.data) ? r.data.data : (r?.data || []);
+      const normalized = list.map(normAgg);
       // sort for nicer UX
-      productsData.sort((a,b) => String(a.productName||'').localeCompare(String(b.productName||'')));
-      invData.sort((a,b) => String(a.inventoryName||'').localeCompare(String(b.inventoryName||'')));
-      unitData.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
-
-      setProducts(productsData);
-      setInventories(invData);
-      setUnits(unitData);
+      normalized.sort((a,b)=> String(a.productName||'').localeCompare(String(b.productName||'')));
+      setRows(normalized);
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Error fetching stock data');
+      setErr(e?.response?.data?.message || e?.message || 'Error fetching stock records');
     } finally {
       setLoading(false);
     }
   }
-
   useEffect(() => { fetchAll(); }, []);
 
-  // Build grouped view: one row per product, expandable to show that product's stocks
+  // group by product to keep your existing look
   const grouped = useMemo(() => {
-    return (products || []).map(p => {
-      const stocks = Array.isArray(p?.stocks) ? p.stocks.map(s => {
-        const ns = normStock(s);
-        // attach product fallback names
-        ns.productName = ns.productName || p.productName || '';
-        return ns;
-      }) : [];
-      // optional filters on stock level
-      const filteredStocks = stocks.filter(s => {
-        if (invFilter && String(s.inventory_id) !== String(invFilter)) return false;
-        if (unitFilter && String(s.unit_id) !== String(unitFilter)) return false;
-        const term = q.trim().toLowerCase();
-        if (!term) return true;
-        const hay = `${p.productName||''} ${s.inventoryName||''} ${s.unitName||''}`.toLowerCase();
-        return hay.includes(term);
-      });
-      // derive summary
-      const invSet = new Set(filteredStocks.map(s => s.inventory_id));
-      const unitSet = new Set(filteredStocks.map(s => s.unit_id));
-      const totalRows = filteredStocks.length;
-      return {
-        productId: p.id,
-        productName: p.productName || `#${p.id}`,
-        description: p.description || '',
-        stocks: filteredStocks,
-        inventoriesCount: invSet.size,
-        unitsCount: unitSet.size,
-        rowsCount: totalRows,
-        updatedAt: (filteredStocks[0]?.updatedAt || p.updatedAt),
-      };
-    }).filter(g => {
-      // If product has 0 rows after filter AND search term is present, we can still hide
-      if (!q.trim()) return true;
-      return g.rowsCount > 0 || (g.productName.toLowerCase().includes(q.trim().toLowerCase()));
+    // group rows by product
+    const map = new Map();
+    rows.forEach(r => {
+      if (invFilter && String(r.inventory_id) !== String(invFilter)) return;
+      if (unitFilter && String(r.unit_id) !== String(unitFilter)) return;
+
+      const term = q.trim().toLowerCase();
+      if (term) {
+        const hay = `${r.productName||''} ${r.inventoryName||''} ${r.unitName||''}`.toLowerCase();
+        if (!hay.includes(term)) return;
+      }
+
+      if (!map.has(r.product_id)) {
+        map.set(r.product_id, {
+          productId: r.product_id,
+          productName: r.productName,
+          description: '',
+          stocks: [],
+          updatedAt: r.updatedAt,
+        });
+      }
+      map.get(r.product_id).stocks.push(r);
     });
-  }, [products, q, invFilter, unitFilter]);
 
-  const allOpen = grouped.length > 0 && grouped.every(g => openIds.has(g.productId));
+    const out = Array.from(map.values());
+    out.forEach(g => {
+      g.inventoriesCount = new Set(g.stocks.map(s=>s.inventory_id)).size;
+      g.unitsCount = new Set(g.stocks.map(s=>s.unit_id)).size;
+      g.rowsCount = g.stocks.length;
+      // latest update we can compute if present
+      const ts = g.stocks.map(s => s.updatedAt).filter(Boolean).map(d=>+new Date(d));
+      g.updatedAt = ts.length ? new Date(Math.max(...ts)).toISOString() : g.updatedAt;
+    });
+    // sort by product name
+    out.sort((a,b)=> String(a.productName||'').localeCompare(String(b.productName||'')));
+    return out;
+  }, [rows, q, invFilter, unitFilter]);
+
+  const allOpen = grouped.length > 0 && grouped.every(g => openKeys.has(g.productId));
   const toggleAll = () => {
-    if (allOpen) setOpenIds(new Set());
-    else setOpenIds(new Set(grouped.map(g => g.productId)));
+    if (allOpen) setOpenKeys(new Set());
+    else setOpenKeys(new Set(grouped.map(g => g.productId)));
   };
-
   const toggleOne = (pid) => {
-    const s = new Set(openIds);
+    const s = new Set(openKeys);
     if (s.has(pid)) s.delete(pid); else s.add(pid);
-    setOpenIds(s);
+    setOpenKeys(s);
   };
 
-  // CRUD
-  async function createStock(body) {
-    // body: { product_id, inventory_id, unit_id, stockQuantity }
-    await api.post('/stock/', body);
+  // ---------- API calls (ONLY /stock) ----------
+  async function postStockTransaction({ product_id, inventory_id, unit_id, qty, direction, notes, methodOverride }) {
+    // Build body for /stock create
+    const body = {
+      stockQuantity: Number(qty),
+      unit_id,
+      product_id,
+      inventory_id,
+      in_out: direction, // 'in' | 'out'
+      notes: notes || undefined,
+    };
+    // Optionally pass a method if your DB requires strict values.
+    const m = methodOverride ?? (direction ? undefined : undefined);
+    if (m !== undefined) body.method = m;
+
+    return api.post('/stock/', body);
   }
 
-  async function updateStock(id, body) {
-    await api.put(`/stock/${id}`, body);
-  }
-
-  async function deleteStock(row) {
-    if (!window.confirm(`Remove stock row for "${row.productName}" in "${row.inventoryName}" (${row.unitName})?`)) return;
-    try {
-      setErr(''); setOk('');
-      await api.delete(`/stock/${row.id}`);
-      setOk('Stock row deleted');
-      await fetchAll();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
-    }
-  }
-
-  // open modals
-  function openCreate(productId = null) {
-    setPrefillProductId(productId);
+  // ---------- Create / Edit flows ----------
+  function openCreate(prefillRow = null) {
+    setPrefill(prefillRow);
     setEditRow(null);
     setModalOpen(true);
   }
-  function openEdit(stockRow) {
-    setPrefillProductId(null);
-    setEditRow(stockRow);
+  function openEdit(row) {
+    setPrefill(null);
+    setEditRow(row);
     setModalOpen(true);
   }
   function closeModal() {
-    setPrefillProductId(null);
+    setPrefill(null);
     setEditRow(null);
     setModalOpen(false);
   }
 
-  // fields for FormModal
-  const CREATE_FIELDS = useMemo(() => {
-    const productOptions = (products || []).map(p => ({ value: p.id, label: p.productName || `#${p.id}` }));
-    const invOptions = (inventories || []).map(i => ({ value: i.id, label: i.inventoryName || `#${i.id}` }));
-    const unitOptions = (units || []).map(u => ({ value: u.id, label: u.name || `#${u.id}` }));
+  // Fields
+  const { productOptions, inventoryOptions, unitOptions } = useMemo(
+    () => buildSelects(rows),
+    [rows]
+  );
 
-    return [
-      { name: 'product_id',   type: 'select', label: 'Product', required: true, options: productOptions, disabled: !!prefillProductId },
-      { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: invOptions },
-      { name: 'unit_id',      type: 'select', label: 'Unit', required: true, options: unitOptions },
-      { name: 'stockQuantity', type: 'number', label: 'Quantity', required: true, step: '0.01', min: '0' },
-    ];
-  }, [products, inventories, units, prefillProductId]);
+  const CREATE_FIELDS = useMemo(() => ([
+    { name: 'product_id',   type: 'select', label: 'Product',   required: true, options: productOptions, disabled: !!prefill?.product_id },
+    { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: inventoryOptions, disabled: !!prefill?.inventory_id },
+    { name: 'unit_id',      type: 'select', label: 'Unit',      required: true, options: unitOptions, disabled: !!prefill?.unit_id },
+    { name: 'stockQuantity', type: 'number', label: 'Quantity (add to stock)', required: true, step: '0.01', min: '0' },
+    { name: 'notes', type: 'textarea', label: 'Notes (optional)' },
+  ]), [productOptions, inventoryOptions, unitOptions, prefill]);
 
   const EDIT_FIELDS = useMemo(() => ([
-    // Keep edit simple: change quantity (and optionally inventory/unit if you want)
-    { name: 'stockQuantity', type: 'number', label: 'Quantity', required: true, step: '0.01', min: '0' },
+    { name: 'newQuantity', type: 'number', label: 'New quantity (final)', required: true, step: '0.01', min: '0' },
   ]), []);
 
   function sanitize(fields, payload) {
@@ -208,21 +230,97 @@ export default function StockPage() {
   async function handleSubmit(form) {
     try {
       setErr(''); setOk('');
-      if (editRow?.id) {
-        const body = sanitize(EDIT_FIELDS, form);
-        await updateStock(editRow.id, body);
-        setOk('Stock updated');
-      } else {
+
+      // CREATE: treat as IN transaction
+      if (!editRow) {
         const body = sanitize(CREATE_FIELDS, form);
-        // if we came from a product-scoped add, force product_id
-        if (prefillProductId) body.product_id = prefillProductId;
-        await createStock(body);
-        setOk('Stock created');
+        // force the prefilled ids when coming from a product row
+        if (prefill?.product_id)   body.product_id   = prefill.product_id;
+        if (prefill?.inventory_id) body.inventory_id = prefill.inventory_id;
+        if (prefill?.unit_id)      body.unit_id      = prefill.unit_id;
+
+        const qty = Number(body.stockQuantity || 0);
+        if (!(qty > 0)) throw new Error('Quantity must be greater than 0');
+
+        await postStockTransaction({
+          product_id: body.product_id,
+          inventory_id: body.inventory_id,
+          unit_id: body.unit_id,
+          qty,
+          direction: 'in',
+          notes: body.notes,
+          methodOverride: METHOD_FOR_CREATE,
+        });
+
+        setOk('Stock added');
+        closeModal();
+        await fetchAll();
+        return;
       }
+
+      // EDIT: "new final quantity" -> derive delta
+      const body = sanitize(EDIT_FIELDS, form);
+      const newQ = Number(body.newQuantity);
+      const curQ = Number(editRow.stockQuantity || 0);
+      if (Number.isNaN(newQ)) throw new Error('Please enter a valid number');
+
+      const delta = newQ - curQ;
+
+      if (delta === 0) {
+        setOk('No changes');
+        closeModal();
+        return;
+      }
+
+      // If decrease, ask for a reason (blocking)
+      let notes = '';
+      let direction = 'in';
+      let qty = Math.abs(delta);
+
+      if (delta < 0) {
+        const reason = window.prompt('This reduces stock. Please enter a reason (required):');
+        if (!reason || !reason.trim()) {
+          setErr('Reduction cancelled — reason is required.');
+          return;
+        }
+        notes = reason.trim();
+        direction = 'out';
+      } else {
+        // optional note for increases
+        notes = window.prompt('Optional notes for this increase (press Cancel to skip):') || '';
+        direction = 'in';
+      }
+
+      // Send as a single /stock transaction
+      await postStockTransaction({
+        product_id: editRow.product_id,
+        inventory_id: editRow.inventory_id,
+        unit_id: editRow.unit_id,
+        qty,
+        direction,
+        notes,
+        methodOverride: METHOD_FOR_ADJUST,
+      });
+
+      setOk(delta > 0 ? `Added ${qty}` : `Reduced ${qty}`);
       closeModal();
       await fetchAll();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Action failed');
+    }
+  }
+
+  // Delete button stays (calls your delete endpoint if you keep it); or hide it if not wanted.
+  async function deleteStock(row) {
+    if (!window.confirm(`Delete the stock row for "${row.productName}" in "${row.inventoryName}" (${row.unitName})?`)) return;
+    try {
+      setErr(''); setOk('');
+      // If your backend doesn't allow deleting aggregated rows, remove this button.
+      await api.delete(`/stock/${row.id}`); // might be unsupported for aggregated — safe to ignore/remove.
+      setOk('Stock row deleted');
+      await fetchAll();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
     }
   }
 
@@ -236,7 +334,7 @@ export default function StockPage() {
               <Boxes size={20}/> Stock
             </h1>
             <p className="text-sm text-slate-500">
-              Expand a product to see stock by inventory and unit. Create, edit, or remove rows.
+              Uses only <code>/stock</code> API. Enter <strong>+</strong> to add, <strong>–</strong> to reduce. Reductions require a reason.
             </p>
           </div>
 
@@ -257,7 +355,8 @@ export default function StockPage() {
               className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
             >
               <option value="">All inventories</option>
-              {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName}</option>)}
+              {Array.from(new Map(rows.map(r => [r.inventory_id, r.inventoryName])).entries())
+                .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
             </select>
 
             <select
@@ -266,7 +365,8 @@ export default function StockPage() {
               className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
             >
               <option value="">All units</option>
-              {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+              {Array.from(new Map(rows.map(r => [r.unit_id, r.unitName])).entries())
+                .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
             </select>
 
             <button
@@ -304,12 +404,12 @@ export default function StockPage() {
         </button>
       </div>
 
-      {/* Expandable Table */}
+      {/* Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur">
         {/* header */}
         <div className="grid grid-cols-[32px_1.2fr_.7fr_.7fr_.8fr_.9fr] items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <span />
-          <span className="flex items-center gap-2"><Package2 size={14}/> Product</span>
+          <span className="flex items-center gap-2"><Boxes size={14}/> Product</span>
           <span className="hidden sm:block">Inventories</span>
           <span className="hidden sm:block">Units</span>
           <span>Rows</span>
@@ -326,7 +426,7 @@ export default function StockPage() {
         ) : (
           <ul className="divide-y divide-slate-200">
             {grouped.map(g => {
-              const isOpen = openIds.has(g.productId);
+              const isOpen = openKeys.has(g.productId);
               return (
                 <li key={g.productId}>
                   {/* product row */}
@@ -382,11 +482,11 @@ export default function StockPage() {
                         {(g.stocks.length === 0) ? (
                           <div className="px-3 py-3 text-sm text-slate-500">No stock rows for this product.</div>
                         ) : g.stocks.map(row => (
-                          <div key={row.id} className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr] items-center gap-3 border-t border-slate-200 px-3 py-2.5">
+                          <div key={row.key} className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr] items-center gap-3 border-t border-slate-200 px-3 py-2.5">
                             <div className="min-w-0">
-                              <div className="truncate text-sm text-slate-800">{row.inventoryName || `#${row.inventory_id}`}</div>
+                              <div className="truncate text-sm text-slate-800">{row.inventoryName}</div>
                             </div>
-                            <div className="text-sm text-slate-700">{row.unitName || `#${row.unit_id}`}</div>
+                            <div className="text-sm text-slate-700">{row.unitName}</div>
                             <div className="text-sm font-semibold text-slate-900">{row.stockQuantity}</div>
                             <div className="text-xs text-slate-500">{prettyDateTime(row.updatedAt)}</div>
                             <div className="flex justify-end gap-2">
@@ -409,7 +509,7 @@ export default function StockPage() {
 
                       <div className="mt-3 flex justify-end">
                         <button
-                          onClick={()=> openCreate(g.productId)}
+                          onClick={()=> openCreate({ product_id: g.productId })}
                           className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                         >
                           <Plus size={16}/> Add stock for “{g.productName}”
@@ -430,14 +530,20 @@ export default function StockPage() {
 
       {/* Modal */}
       <FormModal
-        title={editRow ? 'Edit Stock' : 'Create Stock'}
+        title={editRow ? 'Edit Stock' : 'New Stock Transaction'}
         open={modalOpen}
         onClose={closeModal}
-        fields={editRow ? (EDIT_FIELDS) : (CREATE_FIELDS)}
+        fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
         initial={
           editRow
-            ? { stockQuantity: editRow.stockQuantity }
-            : (prefillProductId ? { product_id: prefillProductId } : {})
+            ? { newQuantity: editRow.stockQuantity }
+            : (prefill
+                ? {
+                    product_id: prefill.product_id ?? undefined,
+                    inventory_id: prefill.inventory_id ?? undefined,
+                    unit_id: prefill.unit_id ?? undefined
+                  }
+                : {})
         }
         onSubmit={handleSubmit}
       />

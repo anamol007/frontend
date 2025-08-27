@@ -14,6 +14,7 @@ import DeliveriesPage from '../pages/DeliveriesPage';
 import ProductUnitsPage from '../pages/ProductUnitsPage';
 import OrdersPage from '../pages/OrdersPage';
 import SummaryPage from '../pages/SummaryPage';
+import StockTransfersPage from '../pages/StockTransfersPage';
 
 export default function DashboardLayout() {
   return (
@@ -63,6 +64,7 @@ export default function DashboardLayout() {
                 {/* transactions */}
                 <Route path="inventories" element={<InventoriesPage />} />
                 <Route path="stock" element={<StockPage />} />
+                <Route path="transfers" element={<StockTransfersPage />} />
                 <Route path="drivers" element={<DriversPage />} />
                 <Route path="deliveries" element={<DeliveriesPage />} />
                 <Route path="summary" element={<SummaryPage />} />

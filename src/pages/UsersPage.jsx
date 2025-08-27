@@ -1,367 +1,406 @@
-// src/pages/UsersPage.jsx
+// src/pages/Users.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Search, Plus, Pencil, Trash2, RefreshCw,
-  Users as UsersIcon, Shield, Truck
-} from 'lucide-react';
+import { User as UserIcon, Search, Plus, RefreshCw, Pencil, Trash2, Building2, ShieldAlert } from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
 
-/* ---------- tiny helpers ---------- */
-function cn(...a){return a.filter(Boolean).join(' ')}
+/* ---------- helpers ---------- */
+const prettyDate = (d) => {
+  if (!d) return '—';
+  const dt = new Date(d);
+  return isNaN(dt) ? '—' : dt.toLocaleString();
+};
 
-function Avatar({ name = '', email = '' }) {
-  const letter = (name || email || '?').trim().charAt(0).toUpperCase();
-  return (
-    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
-      <span className="text-lg font-semibold">{letter}</span>
-    </div>
-  );
-}
-
-function RoleBadge({ role }) {
-  const styles = {
-    admin: 'bg-amber-100 text-amber-700 border-amber-200',
-    superadmin: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-    driver: 'bg-sky-100 text-sky-700 border-sky-200',
-  };
-  const cls = styles[role] || 'bg-slate-100 text-slate-700 border-slate-200';
-  return (
-    <span className={cn(
-      'inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium',
-      cls
-    )}>
-      {role || '—'}
-    </span>
-  );
-}
-
-function BackgroundFX() {
-  // soft gradient blobs behind everything
-  return (
-    <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-      <div className="absolute -top-20 -left-16 h-72 w-72 rounded-full bg-violet-400/25 blur-[90px]" />
-      <div className="absolute top-20 right-10 h-72 w-72 rounded-full bg-cyan-300/25 blur-[90px]" />
-      <div className="absolute -bottom-24 left-1/3 h-72 w-72 rounded-full bg-indigo-400/20 blur-[90px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(90rem_60rem_at_50%_-10%,rgba(99,102,241,0.06),rgba(255,255,255,0))]" />
-    </div>
-  );
-}
-
-function StatCard({ title, value, icon: Icon }) {
-  return (
-    <div className="group relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white/60 p-4 shadow-sm backdrop-blur transition-shadow hover:shadow-lg">
-      <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-transform group-hover:scale-125" />
-      <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white">
-          <Icon size={18} />
-        </div>
-        <div>
-          <p className="text-xs text-slate-500">{title}</p>
-          <p className="text-xl font-semibold text-slate-900">{value}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RoleChip({ label, active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'rounded-full px-3 py-1.5 text-sm transition-colors',
-        active
-          ? 'bg-slate-900 text-white shadow'
-          : 'bg-white/80 text-slate-700 border border-slate-200 hover:bg-white'
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-/* ---------- page ---------- */
 export default function UsersPage() {
-  // defaults: 'user' removed, 'driver' included
-  const DEFAULT_ROLES = ['admin', 'driver', 'superadmin'];
+  // who am I?
+  const [me, setMe] = useState(null);
+  const isAdmin = me?.role === 'admin';
+  const isSuper = me?.role === 'superadmin';
 
+  // data
   const [users, setUsers] = useState([]);
+  const [inventories, setInventories] = useState([]);
+  const [myManagedInvs, setMyManagedInvs] = useState([]); // admin's inventories
+
+  // ui
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
 
-  const [searchTerm, setSearchTerm] = useState('');
+  // filters
+  const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
 
-  const [roles, setRoles] = useState(DEFAULT_ROLES);
-
-  const [open, setOpen] = useState(false);
+  // modal state
+  const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  // merge roles from DB (if any) with defaults
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await api.get('/users'); // admin-only
-        const list = (r?.data?.data ?? r?.data ?? []);
-        const dbRoles = Array.from(new Set(list.map(u => u?.role).filter(Boolean)));
-        if (dbRoles.length) setRoles(Array.from(new Set([...DEFAULT_ROLES, ...dbRoles])));
-      } catch { /* keep defaults */ }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // role “watchers” for conditional fields
+  const [createRole, setCreateRole] = useState('user');
+  const [editRole, setEditRole] = useState('user');
 
-  async function fetchUsers() {
-    setLoading(true); setErr(''); setOk('');
+  // -------- fetch signed-in user + their managed inventories (if admin)
+  async function fetchMe() {
     try {
-      const res = roleFilter ? await api.get(`/users/role/${roleFilter}`) : await api.get('/users');
-      const data = res?.data?.data ?? res?.data ?? [];
-      setUsers(Array.isArray(data) ? data : []);
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+
+      if (u?.id && u?.role === 'admin') {
+        // pull detailed user (includes managedItems → inventory)
+        const d = await api.get(`/users/${u.id}`);
+        const full = d?.data?.data || d?.data || {};
+        const invs = (full.managedItems || [])
+          .map((m) => m?.inventory)
+          .filter(Boolean);
+        setMyManagedInvs(invs);
+      }
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Failed to load users');
+      // if verify fails, leave me = null; the page will likely be protected by router anyway
+      setErr(e?.response?.data?.message || e?.message || 'Error verifying session');
+    }
+  }
+
+  async function fetchAll() {
+    try {
+      setLoading(true);
+      setErr(''); setOk('');
+
+      // inventories are needed for labels/options
+      const invRes = await api.get('/inventory/');
+      const invData = Array.isArray(invRes?.data?.data) ? invRes.data.data : (invRes?.data || []);
+      invData.sort((a,b) => String(a.inventoryName||'').localeCompare(String(b.inventoryName||'')));
+      setInventories(invData);
+
+      if (isSuper) {
+        // only superadmin can see/manage users
+        const uRes = await api.get('/users/');
+        const usersData = Array.isArray(uRes?.data?.data) ? uRes.data.data : (uRes?.data || []);
+        usersData.sort((a,b) => String(a.fullname||'').localeCompare(String(b.fullname||'')));
+        setUsers(usersData);
+      } else {
+        setUsers([]); // admins see no list
+      }
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Error fetching users');
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    fetchUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleFilter]);
+  // bootstrap: who am I, then load page data with correct guard
+  useEffect(() => { fetchMe(); }, []);
+  useEffect(() => { if (me) fetchAll(); }, [me]); // refetch after we know the role
 
-  // sort roles A→Z for chips & dropdown
-  const sortedRoles = useMemo(
-    () => [...roles].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
-    [roles]
+  // options
+  const allInvOptions = useMemo(
+    () => (inventories || []).map(i => ({ value: i.id, label: i.inventoryName || `#${i.id}` })),
+    [inventories]
   );
 
-  // filter & sort users A→Z by fullname (fallback email)
-  const filtered = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-    const base = q
-      ? users.filter(u =>
-          (u.fullname || '').toLowerCase().includes(q) ||
-          (u.email || '').toLowerCase().includes(q)
-        )
-      : users;
+  // for admins, limit to their managed inventories; for superadmin, show all
+  const visibleInvOptions = useMemo(() => {
+    if (isSuper) return allInvOptions;
+    const allowed = new Set(myManagedInvs.map((i) => String(i.id)));
+    return allInvOptions.filter(o => allowed.has(String(o.value)));
+  }, [allInvOptions, isSuper, myManagedInvs]);
 
-    return [...base].sort((a, b) => {
-      const A = (a.fullname || a.email || '').toLowerCase();
-      const B = (b.fullname || b.email || '').toLowerCase();
-      return A.localeCompare(B);
-    });
-  }, [users, searchTerm]);
+  // For EDIT: exclude inventories the user already manages (superadmin only anyway)
+  const editInvOptions = useMemo(() => {
+    if (!editRow) return visibleInvOptions;
+    const owned = new Set(
+      (editRow.managedItems || [])
+        .map(m => m?.inventory?.id)
+        .filter(Boolean)
+        .map(String)
+    );
+    return visibleInvOptions.filter(o => !owned.has(String(o.value)));
+  }, [visibleInvOptions, editRow]);
 
-  // stats from current list (not extra API)
-  const stats = useMemo(() => {
-    const total = filtered.length;
-    const admin = filtered.filter(u => u.role === 'admin').length;
-    const superadmin = filtered.filter(u => u.role === 'superadmin').length;
-    const driver = filtered.filter(u => u.role === 'driver').length;
-    return { total, admin, superadmin, driver };
-  }, [filtered]);
+  // Field sets (only used for superadmin flows)
+  const CREATE_FIELDS = useMemo(() => {
+    const fields = [
+      { name: 'fullname', type: 'text', label: 'Full name', required: true },
+      { name: 'email', type: 'email', label: 'Email', required: true },
+      { name: 'password', type: 'password', label: 'Password', required: true },
+      {
+        name: 'role', type: 'select', label: 'Role', required: true,
+        options: [
+          { value: 'user',       label: 'User' },
+          { value: 'admin',      label: 'Admin' },
+          { value: 'superadmin', label: 'Super Admin' },
+        ],
+        onChange: (e) => setCreateRole(e.target.value),
+      },
+    ];
+    if (createRole === 'admin') {
+      fields.push({
+        name: 'inventoryId',
+        type: 'select',
+        label: 'Managed Inventory (Admin only)',
+        required: true,
+        options: visibleInvOptions, // superadmin sees all; admin would see only theirs
+        helper: 'Choose the inventory this Admin will manage.',
+      });
+    }
+    return fields;
+  }, [visibleInvOptions, createRole]);
 
-  // CRUD field configs (only allowed fields)
-  const CREATE_FIELDS = useMemo(() => ([
-    { name: 'fullname', type: 'text',     label: 'Full Name', required: true },
-    { name: 'email',    type: 'email',    label: 'Email',     required: true },
-    { name: 'password', type: 'password', label: 'Password',  required: true },
-    { name: 'role',     type: 'select',   label: 'Role',      required: true, options: sortedRoles },
-  ]), [sortedRoles]);
+  const EDIT_FIELDS = useMemo(() => {
+    const fields = [
+      { name: 'fullname', type: 'text', label: 'Full name' },
+      { name: 'email', type: 'email', label: 'Email' },
+      { name: 'password', type: 'password', label: 'New password (optional)' },
+      {
+        name: 'role', type: 'select', label: 'Role',
+        options: [
+          { value: 'user',       label: 'User' },
+          { value: 'admin',      label: 'Admin' },
+          { value: 'superadmin', label: 'Super Admin' },
+        ],
+        onChange: (e) => setEditRole(e.target.value),
+        helper: 'If role is Admin, you can assign a managed inventory below.',
+      },
+    ];
+    if (editRole === 'admin') {
+      fields.push({
+        name: 'inventoryId',
+        type: 'select',
+        label: 'Managed Inventory (Admin only)',
+        required: false,
+        options: [
+          { value: '', label: '— No change —' },
+          ...editInvOptions,
+          { value: 'null', label: 'Remove assignment' },
+        ],
+        helper: 'Pick a new inventory for this Admin, or “Remove assignment”.',
+      });
+    }
+    return fields;
+  }, [editRole, editInvOptions]);
 
-  const EDIT_FIELDS = useMemo(() => ([
-    { name: 'fullname', type: 'text',   label: 'Full Name', required: true },
-    { name: 'email',    type: 'email',  label: 'Email',     required: true },
-    { name: 'role',     type: 'select', label: 'Role',      required: true, options: sortedRoles },
-    { name: '_newPassword', type: 'password', label: 'New Password (optional)' },
-  ]), [sortedRoles]);
-
-  // trim & whitelist
+  // sanitize payload to visible fields only
   function sanitize(fields, payload) {
     const allow = new Set(fields.map(f => f.name));
     const out = {};
-    Object.keys(payload || {}).forEach(k => {
+    Object.entries(payload || {}).forEach(([k, v]) => {
       if (!allow.has(k)) return;
-      const raw = payload[k];
-      const v = typeof raw === 'string' ? raw.trim() : raw;
-      if (v === '' || v === undefined || v === null) return;
-      out[k] = v;
+      if (v === '' || v === undefined) return;
+      out[k] = (v === 'null') ? null : v;
     });
     return out;
   }
 
-  async function handleSubmit(form) {
+  // CRUD (superadmin only)
+  async function createUser(body) { await api.post('/users/', body); }
+  async function updateUser(id, body) { await api.put(`/users/${id}`, body); }
+  async function deleteUserRow(row) {
+    if (!window.confirm(`Delete user "${row.fullname}"?`)) return;
     try {
       setErr(''); setOk('');
-      if (editRow?.id) {
-        const payload = sanitize(EDIT_FIELDS, form);
-        const { _newPassword, ...updateBody } = payload;
-        await api.put(`/users/${editRow.id}`, updateBody);
-
-        const np = (form?._newPassword || '').trim();
-        if (np) await api.put(`/users/${editRow.id}/change-password`, { newPassword: np });
-
-        setOk(np ? 'User updated & password changed' : 'User updated');
-      } else {
-        const payload = sanitize(CREATE_FIELDS, form);
-        await api.post('/users', payload);
-        setOk('User created');
-      }
-      setOpen(false); setEditRow(null);
-      await fetchUsers();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Action failed');
-    }
-  }
-
-  async function handleDelete(u) {
-    if (!window.confirm(`Delete user "${u.fullname || u.email}"?`)) return;
-    try {
-      setErr(''); setOk('');
-      await api.delete(`/users/${u.id}`);
+      await api.delete(`/users/${row.id}`);
       setOk('User deleted');
-      await fetchUsers();
+      await fetchAll();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Delete failed');
     }
   }
 
-  return (
-    <div className="relative">
-      <BackgroundFX />
+  // modal
+  function openCreate() { setCreateRole('user'); setEditRow(null); setModalOpen(true); }
+  function openEdit(row) { setEditRow(row); setEditRole(row?.role || 'user'); setModalOpen(true); }
+  function closeModal() { setEditRow(null); setModalOpen(false); }
 
-      {/* header */}
-      <div className="mb-5 rounded-3xl border border-slate-200/70 bg-white/60 p-6 backdrop-blur">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+  async function handleSubmit(form) {
+    try {
+      setErr(''); setOk('');
+      if (editRow?.id) {
+        const body = sanitize(EDIT_FIELDS, form);
+        await updateUser(editRow.id, body);
+        setOk('User updated');
+      } else {
+        const body = sanitize(CREATE_FIELDS, form);
+        await createUser(body);
+        setOk('User created');
+      }
+      closeModal();
+      await fetchAll();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Action failed');
+    }
+  }
+
+  // view: filtered list (superadmin only)
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return (users || []).filter(u => {
+      if (roleFilter && u.role !== roleFilter) return false;
+      if (!term) return true;
+      const invNames = (u.managedItems || [])
+        .map(m => m?.inventory?.inventoryName)
+        .filter(Boolean)
+        .join(' ');
+      const hay = `${u.fullname||''} ${u.email||''} ${invNames}`.toLowerCase();
+      return hay.includes(term);
+    });
+  }, [users, q, roleFilter]);
+
+  // ---------- RENDER ----------
+  return (
+    <div className="space-y-5">
+      <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-3xl font-extrabold text-transparent">
-              Team & Roles
+            <h1 className="flex items-center gap-2 text-2xl font-semibold text-slate-900">
+              <UserIcon size={20}/> Users
             </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Manage members, update roles, and keep your workspace tidy.
+            <p className="text-sm text-slate-500">
+              {isSuper
+                ? <>Connected to <code>/users</code>. Create, edit, delete and (for admins) assign a managed inventory.</>
+                : <>Access limited. As an Admin you cannot manage users; you can view your assigned inventories below.</>}
             </p>
           </div>
 
-          {/* search + actions */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5 shadow-sm backdrop-blur">
-              <Search size={18} className="text-slate-400" />
-              <input
-                value={searchTerm}
-                onChange={(e)=> setSearchTerm(e.target.value)}
-                placeholder="Search name or email…"
-                type="search"
-                className="input-unstyled w-64 text-sm"
-              />
+          {isSuper && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
+                <Search size={16} className="text-slate-400" />
+                <input
+                  value={q}
+                  onChange={(e)=> setQ(e.target.value)}
+                  placeholder="Search name / email / inventory…"
+                  className="w-72 bg-transparent outline-none text-sm"
+                />
+              </div>
+
+              <select
+                value={roleFilter}
+                onChange={e=> setRoleFilter(e.target.value)}
+                className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
+              >
+                <option value="">All roles</option>
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+                <option value="superadmin">Super Admin</option>
+              </select>
+
+              <button
+                onClick={fetchAll}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
+              >
+                <RefreshCw size={16}/> Refresh
+              </button>
+
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16}/> New User
+              </button>
             </div>
+          )}
+        </div>
 
-            <button
-              onClick={fetchUsers}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white/90 px-3 py-2.5 text-sm text-slate-700 shadow-sm backdrop-blur hover:bg-white"
-            >
-              <RefreshCw size={16} /> Refresh
-            </button>
-
-            <button
-              onClick={()=>{ setEditRow(null); setOpen(true); }}
-              className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16} /> New User
-            </button>
+        {(err || ok) && (
+          <div className="mt-3">
+            {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
+            {ok  && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
           </div>
-        </div>
-
-        {/* quick role chips */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <RoleChip
-            label="All"
-            active={!roleFilter}
-            onClick={()=> setRoleFilter('')}
-          />
-          {sortedRoles.map(r => (
-            <RoleChip
-              key={r}
-              label={r}
-              active={roleFilter === r}
-              onClick={()=> setRoleFilter(r)}
-            />
-          ))}
-        </div>
-
-        {/* messages */}
-        {err && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
-        {ok  && <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+        )}
       </div>
 
-      {/* stats */}
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="Total" value={stats.total} icon={UsersIcon} />
-        <StatCard title="Admins" value={stats.admin} icon={Shield} />
-        <StatCard title="Superadmins" value={stats.superadmin} icon={Shield} />
-        <StatCard title="Drivers" value={stats.driver} icon={Truck} />
-      </div>
-
-      {/* list */}
-      {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(6)].map((_,i)=>(
-            <div key={i} className="h-36 animate-pulse rounded-2xl border border-slate-200/70 bg-white/60 backdrop-blur" />
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200/70 bg-white/60 p-10 text-center text-slate-600 backdrop-blur">
-          No users found. Try a different search or role.
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map(u => (
-            <div
-              key={u.id}
-              className="group relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white/60 p-4 shadow-sm backdrop-blur transition hover:shadow-lg"
-            >
-              {/* sheen */}
-              <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
-              <div className="flex items-start gap-3">
-                <Avatar name={u.fullname} email={u.email} />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate text-base font-semibold text-slate-900">{u.fullname || '—'}</h3>
-                    <RoleBadge role={u.role} />
-                  </div>
-                  <p className="truncate text-sm text-slate-600">{u.email || '—'}</p>
-                  <p className="mt-1 text-xs text-slate-400">ID: {u.id ?? '—'}</p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={()=>{ setEditRow(u); setOpen(true); }}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm text-slate-700 shadow-sm hover:bg-white"
-                >
-                  <Pencil size={16} /> Edit
-                </button>
-                <button
-                  onClick={()=> handleDelete(u)}
-                  className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow hover:bg-rose-700"
-                >
-                  <Trash2 size={16} /> Delete
-                </button>
-              </div>
-            </div>
-          ))}
+      {/* Admin view: read-only assigned inventories */}
+      {isAdmin && (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-4">
+          <div className="flex items-center gap-2 text-slate-700 mb-3">
+            <ShieldAlert size={18} /> <span className="font-medium">Your assigned inventories</span>
+          </div>
+          {myManagedInvs.length === 0 ? (
+            <div className="text-sm text-slate-500">No inventory assignment found for your account.</div>
+          ) : (
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {myManagedInvs.map(inv => (
+                <li key={inv.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="font-medium text-slate-900">{inv.inventoryName}</div>
+                  {inv.location && <div className="text-xs text-slate-500">{inv.location}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
-      {/* Modal */}
-      <FormModal
-        title={editRow ? 'Edit User' : 'Create User'}
-        open={open}
-        onClose={()=>{ setOpen(false); setEditRow(null); }}
-        fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-        initial={editRow || {}}
-        onSubmit={handleSubmit}
-      />
+      {/* Superadmin table */}
+      {isSuper && (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur">
+          <div className="grid grid-cols-[1.6fr_1.2fr_.7fr_.9fr_.7fr] items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <span>Name & Email</span>
+            <span className="flex items-center gap-2"><Building2 size={14}/> Managed Inventory</span>
+            <span>Role</span>
+            <span>Created</span>
+            <span className="text-right">Actions</span>
+          </div>
+
+          {loading ? (
+            <div className="p-4">
+              {[...Array(6)].map((_,i)=>(
+                <div key={i} className="h-12 animate-pulse rounded-xl border border-slate-200 bg-white/60 mb-2"/>
+              ))}
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-200">
+              {filtered.map(u => (
+                <li key={u.id} className="grid grid-cols-[1.6fr_1.2fr_.7fr_.9fr_.7fr] items-center gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-slate-900">{u.fullname}</div>
+                    <div className="truncate text-xs text-slate-500">{u.email}</div>
+                  </div>
+                  <div className="text-sm text-slate-700">
+                    {(u.managedItems && u.managedItems.length > 0)
+                      ? u.managedItems.map(m => m?.inventory?.inventoryName).filter(Boolean).join(', ')
+                      : <span className="text-slate-400">—</span>}
+                  </div>
+                  <div className="text-sm text-slate-700 capitalize">{u.role}</div>
+                  <div className="text-xs text-slate-500">{prettyDate(u.createdAt)}</div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={()=> openEdit(u)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                    >
+                      <Pencil size={14}/> Edit
+                    </button>
+                    <button
+                      onClick={()=> deleteUserRow(u)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+                    >
+                      <Trash2 size={14}/> Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+              {filtered.length === 0 && !loading && (
+                <li className="px-4 py-6 text-center text-slate-500">No users found.</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Modal (superadmin only) */}
+      {isSuper && (
+        <FormModal
+          title={editRow ? `Edit User: ${editRow.fullname}` : 'New User'}
+          open={modalOpen}
+          onClose={closeModal}
+          fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
+          initial={
+            editRow
+              ? { fullname: editRow.fullname, email: editRow.email, role: editRow.role }
+              : { role: createRole }
+          }
+          onSubmit={handleSubmit}
+        />
+      )}
     </div>
   );
 }

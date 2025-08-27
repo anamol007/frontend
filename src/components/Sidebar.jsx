@@ -1,32 +1,38 @@
-// src/components/Sidebar.jsx
 import { NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, Package, Tags, Map, Boxes,
-  Truck, ClipboardList, UserCircle2, Waypoints, Scale, Gauge
+  LayoutDashboard, Users, Package, Tags, UserCircle2,
+  Boxes, Truck, ClipboardList, ListChecks, Gauge, Map, ArrowLeftRight
 } from 'lucide-react';
 
-const Item = ({ to, icon: Icon, label }) => (
-  <NavLink
-    to={to}
-    className={({ isActive }) =>
-      `group mt-1 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition
-       ${isActive ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`
-    }
-  >
-    <span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-900 text-white">
-      <Icon size={18} />
-    </span>
-    <span>{label}</span>
-    <span className="ml-auto opacity-0 group-hover:opacity-100 text-slate-400">↗</span>
-  </NavLink>
-);
+function Item({ to, icon: Icon, label, end = false }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        [
+          'group mt-1 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition',
+          'ring-1 ring-transparent',
+          isActive
+            ? 'bg-white text-slate-900 shadow-sm ring-slate-200'
+            : 'text-slate-600 hover:bg-white/70 hover:ring-slate-200'
+        ].join(' ')
+      }
+    >
+      <span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-slate-700 ring-1 ring-slate-200 group-hover:ring-slate-300">
+        <Icon size={18} />
+      </span>
+      <span className="truncate">{label}</span>
+    </NavLink>
+  );
+}
 
 export default function Sidebar() {
   return (
-    <div className="h-full flex flex-col p-4">
-      {/* brand */}
+    <div className="h-full flex flex-col p-4 bg-gradient-to-b from-slate-50 to-white/80 backdrop-blur-xl">
+      {/* Brand */}
       <div className="mb-6 flex items-center gap-3 px-2">
-        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-900 text-white">
+        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-slate-800 ring-1 ring-slate-200">
           <UserCircle2 />
         </div>
         <div>
@@ -35,36 +41,40 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <div className="space-y-6 overflow-auto">
+      <div className="space-y-6 overflow-auto pr-1">
+        {/* General */}
         <div>
-          <div className="px-2 text-xs font-semibold uppercase tracking-wider text-slate-400">General</div>
+          <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">General</div>
           <div className="mt-2 px-2">
-            <Item to="/dashboard" icon={LayoutDashboard} label="Dashboard" />
+            <Item to="/dashboard" icon={LayoutDashboard} label="Dashboard" end />
           </div>
         </div>
 
-
+        {/* Master Data */}
         <div>
-          <div className="px-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Master Data</div>
+          <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Master Data</div>
           <div className="mt-2 px-2">
             <Item to="/dashboard/users" icon={Users} label="Users" />
             <Item to="/dashboard/products" icon={Package} label="Products" />
-            {/* NEW: Product Units page */}
-            <Item to="/dashboard/product-units" icon={Scale} label="Product Units" />
             <Item to="/dashboard/categories" icon={Tags} label="Categories" />
             <Item to="/dashboard/customers" icon={UserCircle2} label="Customers" />
-            <Item to="/dashboard/orders" icon={ClipboardList} label="Orders" />
+            <Item to="/dashboard/product-units" icon={ClipboardList} label="Product Units" />
           </div>
         </div>
 
+        {/* Transactions (Summary at bottom) */}
         <div>
-          <div className="px-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Transactions</div>
+          <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Transactions</div>
           <div className="mt-2 px-2">
             <Item to="/dashboard/inventories" icon={Map} label="Inventories" />
+            <Item to="/dashboard/transfers" icon={ArrowLeftRight} label="Transfers" />
             <Item to="/dashboard/stock" icon={Boxes} label="Stock" />
             <Item to="/dashboard/drivers" icon={Truck} label="Drivers" />
             <Item to="/dashboard/deliveries" icon={ClipboardList} label="Deliveries" />
-            <Item to="/dashboard/summary" icon={Gauge} label="Summary" />
+            <Item to="/dashboard/orders" icon={ListChecks} label="Orders" />
+            <div className="mt-1 pt-1 border-t border-slate-200/70">
+              <Item to="/dashboard/summary" icon={Gauge} label="Summary" />
+            </div>
           </div>
         </div>
       </div>
