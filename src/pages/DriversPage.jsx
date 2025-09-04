@@ -102,7 +102,6 @@ function StatsModal({ open, rows, onRefresh, busy, onClose }) {
   if (!open) return null;
 
   const list = safeArr(rows).slice().sort((a, b) => {
-    // try display name
     const an = a?.user?.fullname || a?.User?.fullname || a?.driverName || '';
     const bn = b?.user?.fullname || b?.User?.fullname || b?.driverName || '';
     return byText(an, bn);
@@ -160,6 +159,10 @@ function StatsModal({ open, rows, onRefresh, busy, onClose }) {
 
 // ---------- Main page ----------
 export default function DriversPage() {
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === 'superadmin';
+
   const [rows, setRows] = useState([]);
   const [users, setUsers] = useState([]);
 
@@ -175,43 +178,63 @@ export default function DriversPage() {
   const [statsBusy, setStatsBusy] = useState(false);
   const [statsRows, setStatsRows] = useState([]);
 
-  // load drivers + users
+  // who am I?
+  async function fetchMe() {
+    try {
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      // leave null -> read-only
+    }
+  }
+
+  // load drivers (+ users only for superadmin)
   async function load() {
     setErr(''); setOk('');
     setLoading(true);
     try {
-      const [dr, ur] = await Promise.allSettled([api.get('/drivers/'), api.get('/users/')]);
-      if (dr.status === 'fulfilled') {
-        const d = safeArr(getList(dr.value));
-        // sort by display name
-        d.sort((a, b) => {
-          const an = a?.user?.fullname || a?.User?.fullname || a?.driverName || '';
-          const bn = b?.user?.fullname || b?.User?.fullname || b?.driverName || '';
-          return byText(an, bn);
-        });
-        setRows(d);
-      } else {
-        setErr(dr.reason?.response?.data?.message || dr.reason?.message || 'Failed to load drivers');
-      }
-
-      if (ur.status === 'fulfilled') {
-        const u = safeArr(getList(ur.value))
-          .map(x => ({ id: x.id, fullname: x.fullname, email: x.email, role: x.role }))
-          .sort((a, b) => byText(a.fullname || a.email, b.fullname || b.email));
-        setUsers(u);
-      } else {
-        setUsers([]);
-      }
+      const dr = await api.get('/drivers/');
+      const d = safeArr(getList(dr));
+      d.sort((a, b) => {
+        const an = a?.user?.fullname || a?.User?.fullname || a?.driverName || '';
+        const bn = b?.user?.fullname || b?.User?.fullname || b?.driverName || '';
+        return byText(an, bn);
+      });
+      setRows(d);
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Failed to load drivers');
     } finally {
       setLoading(false);
     }
+
+    if (isSuper) {
+      try {
+        const ur = await api.get('/users/');
+        const u = safeArr(getList(ur))
+          .map(x => ({ id: x.id, fullname: x.fullname, email: x.email, role: x.role }))
+          .sort((a, b) => byText(a.fullname || a.email, b.fullname || b.email));
+        setUsers(u);
+      } catch {
+        setUsers([]);
+      }
+    } else {
+      setUsers([]);
+    }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { fetchMe(); }, []);
+  useEffect(() => { load(); }, [me]); // reload after we know the role
 
-  // create/edit actions
-  const openCreate = () => { setEditRow(null); setEditOpen(true); };
+  // create/edit actions (superadmin only)
+  const openCreate = () => {
+    if (!isSuper) { setErr('Only Super Admin can create drivers'); return; }
+    setEditRow(null);
+    setEditOpen(true);
+  };
+
   const openEdit = (row) => {
+    if (!isSuper) { setErr('Only Super Admin can edit drivers'); return; }
     const user_id =
       row?.user_id ??
       row?.userId ??
@@ -226,6 +249,7 @@ export default function DriversPage() {
   };
 
   async function handleSubmit(payload) {
+    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
     try {
       if (editRow?.id) {
         await api.put(`/drivers/${editRow.id}`, payload);
@@ -243,6 +267,7 @@ export default function DriversPage() {
   }
 
   async function handleDelete(row) {
+    if (!isSuper) { setErr('Only Super Admin can delete drivers'); return; }
     if (!window.confirm('Delete this driver?')) return;
     setErr(''); setOk('');
     try {
@@ -254,7 +279,7 @@ export default function DriversPage() {
     }
   }
 
-  // stats
+  // stats (allowed for all roles)
   async function fetchStats() {
     setStatsBusy(true);
     try {
@@ -283,7 +308,11 @@ export default function DriversPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Drivers</h1>
-            <p className="text-sm text-slate-500">Manage delivery drivers. Create, edit, delete and view delivery stats.</p>
+            <p className="text-sm text-slate-500">
+              {isSuper
+                ? 'Manage delivery drivers. Create, edit, delete and view delivery stats.'
+                : 'Browse delivery drivers and view delivery stats.'}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -311,12 +340,14 @@ export default function DriversPage() {
               <RefreshCw size={16} /> Refresh
             </button>
 
-            <button
-              onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16} /> New Driver
-            </button>
+            {isSuper && (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16} /> New Driver
+              </button>
+            )}
           </div>
         </div>
 
@@ -359,20 +390,22 @@ export default function DriversPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex justify-end gap-2">
-                  <button
-                    onClick={() => openEdit(d)}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                  >
-                    <Pencil size={16} /> Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(d)}
-                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                  >
-                    <Trash2 size={16} /> Delete
-                  </button>
-                </div>
+                {isSuper && (
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button
+                      onClick={() => openEdit(d)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <Pencil size={16} /> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(d)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    >
+                      <Trash2 size={16} /> Delete
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

@@ -1,8 +1,11 @@
+// src/components/Sidebar.jsx
+import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Package, Tags, UserCircle2,
   Boxes, Truck, ClipboardList, ListChecks, Gauge, Map, ArrowLeftRight
 } from 'lucide-react';
+import { api } from '../utils/api';
 
 function Item({ to, icon: Icon, label, end = false }) {
   return (
@@ -19,15 +22,63 @@ function Item({ to, icon: Icon, label, end = false }) {
         ].join(' ')
       }
     >
-      <span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-slate-700 ring-1 ring-slate-200 group-hover:ring-slate-300">
-        <Icon size={18} />
-      </span>
-      <span className="truncate">{label}</span>
+      {({ isActive }) => (
+        <>
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-slate-700 ring-1 ring-slate-200 group-hover:ring-slate-300">
+            <Icon size={18} />
+          </span>
+          <span className="truncate">{label}</span>
+
+          {/* Active green dot */}
+          {isActive && (
+            <span aria-hidden className="ml-auto inline-flex items-center justify-center">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 animate-pulse shadow-[0_0_0_2px_rgba(16,185,129,0.15)]" />
+            </span>
+          )}
+        </>
+      )}
     </NavLink>
   );
 }
 
 export default function Sidebar() {
+  const [brandTitle, setBrandTitle] = useState('Inventory Console');
+  const [brandSub, setBrandSub] = useState(''); // e.g. Admin / Super Admin
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadBrand() {
+      try {
+        const vt = await api.get('/users/verify-token');
+        const user = vt?.data?.data?.user || vt?.data?.user || vt?.data;
+
+        if (!mounted || !user) return;
+
+        // show role tag if you like
+        setBrandSub(user.role ? user.role[0].toUpperCase() + user.role.slice(1) : '');
+
+        if (user.role === 'admin') {
+          // fetch managed inventory to display its name
+          const detail = await api.get(`/users/${user.id}`);
+          const full = detail?.data?.data || detail?.data || {};
+          const managed = Array.isArray(full.managedItems) ? full.managedItems : [];
+          const invName = managed?.[0]?.inventory?.inventoryName;
+
+          if (mounted && invName) setBrandTitle(invName);
+        } else {
+          // superadmin/driver/etc fall back to default
+          setBrandTitle('Inventory Console');
+        }
+      } catch {
+        // ignore errors; keep default brand
+      }
+    }
+
+    loadBrand();
+    return () => { mounted = false; };
+  }, []);
+
   return (
     <div className="h-full flex flex-col p-4 bg-gradient-to-b from-slate-50 to-white/80 backdrop-blur-xl">
       {/* Brand */}
@@ -36,8 +87,8 @@ export default function Sidebar() {
           <UserCircle2 />
         </div>
         <div>
-          <div className="text-sm font-semibold tracking-wide text-slate-900">Inventory Console</div>
-          <div className="text-xs text-slate-500">Admin</div>
+          <div className="text-sm font-semibold tracking-wide text-slate-900">{brandTitle}</div>
+          {brandSub && <div className="text-xs text-slate-500">{brandSub}</div>}
         </div>
       </div>
 

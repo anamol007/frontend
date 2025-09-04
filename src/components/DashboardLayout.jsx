@@ -15,6 +15,7 @@ import ProductUnitsPage from '../pages/ProductUnitsPage';
 import OrdersPage from '../pages/OrdersPage';
 import SummaryPage from '../pages/SummaryPage';
 import StockTransfersPage from '../pages/StockTransfersPage';
+import MyProfilePage from '../pages/MyProfilePage';
 
 export default function DashboardLayout() {
   return (
@@ -68,6 +69,7 @@ export default function DashboardLayout() {
                 <Route path="drivers" element={<DriversPage />} />
                 <Route path="deliveries" element={<DeliveriesPage />} />
                 <Route path="summary" element={<SummaryPage />} />
+                <Route path="my-profile" element={<MyProfilePage />} />
 
                 <Route path="*" element={<Navigate to="." replace />} />
               </Routes>

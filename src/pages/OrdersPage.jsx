@@ -26,6 +26,10 @@ function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200"
 }
 
 export default function OrdersPage() {
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === "superadmin";
+
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -41,6 +45,19 @@ export default function OrdersPage() {
   const [invFilter, setInvFilter] = useState("");
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
+
+  // who am I?
+  async function fetchMe() {
+    try {
+      const r = await api.get("/users/verify-token");
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      setMe(null);
+    }
+  }
+
+  useEffect(() => { fetchMe(); }, []);
 
   // --------- load reference data
   useEffect(() => {
@@ -123,7 +140,9 @@ export default function OrdersPage() {
     return out;
   }
 
+  // --------- CRUD (superadmin only)
   async function handleSubmit(form) {
+    if (!isSuper) { setErr("Only Super Admin can perform this action"); return; }
     try {
       setErr(""); setOk("");
       if (editRow?.id) {
@@ -143,6 +162,7 @@ export default function OrdersPage() {
   }
 
   async function handleDelete(row) {
+    if (!isSuper) { setErr("Only Super Admin can delete orders"); return; }
     if (!window.confirm(`Delete order #${row.id}?`)) return;
     try {
       setErr(""); setOk("");
@@ -161,7 +181,11 @@ export default function OrdersPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Orders</h1>
-            <p className="text-sm text-slate-500">Create, edit, or manage orders. Totals are auto-calculated by the server.</p>
+            <p className="text-sm text-slate-500">
+              {isSuper
+                ? "Create, edit, or manage orders. Totals are auto-calculated by the server."
+                : "Browse and filter orders (read-only)."}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
@@ -170,7 +194,7 @@ export default function OrdersPage() {
                 value={q}
                 onChange={e => setQ(e.target.value)}
                 placeholder="Search customer, product, inventory…"
-                className="w-64 bg-transparent outline-none text-sm"
+                className="w-full sm:w-64 bg-transparent outline-none text-sm"
               />
             </div>
             <select
@@ -195,12 +219,14 @@ export default function OrdersPage() {
             >
               <RefreshCw size={16} /> Refresh
             </button>
-            <button
-              onClick={() => { setEditRow(null); setOpen(true); }}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16} /> New Order
-            </button>
+            {isSuper && (
+              <button
+                onClick={() => { setEditRow(null); setOpen(true); }}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16} /> New Order
+              </button>
+            )}
           </div>
         </div>
         {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
@@ -237,7 +263,6 @@ export default function OrdersPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      {/* ✅ one hash only */}
                       <Badge tone="bg-slate-100 text-slate-700 border-slate-200">#{o.id}</Badge>
                       <Badge tone={statusTone}><BadgeCheck size={12} /> {o.status || "pending"}</Badge>
                       <Badge tone="bg-violet-100 text-violet-700 border-violet-200">
@@ -264,40 +289,42 @@ export default function OrdersPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex justify-end gap-2">
-                  <button
-                    onClick={() => {
-                      setEditRow({
-                        id: o.id,
-                        customerId: o.customerId,
-                        productId: o.productId,
-                        inventoryId: o.inventoryId,
-                        quantity: o.quantity,
-                        unit_id: o.unit_id,
-                        status: o.status,
-                        paymentMethod: o.paymentMethod,
-                        orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
-                      });
-                      setOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                  >
-                    <Pencil size={16}/> Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(o)}
-                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                  >
-                    <Trash2 size={16}/> Delete
-                  </button>
-                </div>
+                {isSuper && (
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button
+                      onClick={() => {
+                        setEditRow({
+                          id: o.id,
+                          customerId: o.customerId,
+                          productId: o.productId,
+                          inventoryId: o.inventoryId,
+                          quantity: o.quantity,
+                          unit_id: o.unit_id,
+                          status: o.status,
+                          paymentMethod: o.paymentMethod,
+                          orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
+                        });
+                        setOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <Pencil size={16}/> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(o)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    >
+                      <Trash2 size={16}/> Delete
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Modal */}
+      {/* Modal (superadmin only; guarded in onSubmit too) */}
       <FormModal
         title={editRow ? "Edit Order" : "Create Order"}
         open={open}

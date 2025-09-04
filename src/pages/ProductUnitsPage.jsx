@@ -1,112 +1,101 @@
 // src/pages/ProductUnitsPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react';
+import { Layers, Plus, Pencil, Trash2, Search, RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
+import FormModal from '../components/FormModal';
 
-/* ---------- date helpers ---------- */
-const ordinal = (n) => {
-  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-};
+/* ---------- helpers ---------- */
 const prettyDate = (d) => {
   if (!d) return '—';
   const dt = new Date(d);
-  if (isNaN(dt)) return '—';
-  const M = dt.toLocaleString(undefined, { month: 'short' }); // Jan, Feb…
-  const D = ordinal(dt.getDate());                             // 1st, 2nd…
-  const Y = dt.getFullYear();
-  return `${M} ${D}, ${Y}`;
+  if (Number.isNaN(dt.getTime())) return '—';
+  return dt.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric'
+  });
 };
 
-function UnitRow({ u, onEdit, onDelete }) {
-  const when = prettyDate(u.updatedAt || u.createdAt);
-  return (
-    <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-gradient-to-br from-white/85 to-white/60 p-4 hover:shadow-md transition-shadow">
-      <div className="min-w-0">
-        <div className="text-base font-semibold text-slate-900 truncate">{u.name}</div>
-        <div className="mt-0.5 text-xs text-slate-500">
-          ID: {u.id} • Updated {when}
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={() => onEdit(u)}
-          className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-        >
-          <Pencil size={14}/> Edit
-        </button>
-        <button
-          onClick={() => onDelete(u)}
-          className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-        >
-          <Trash2 size={14}/> Delete
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function ProductUnitsPage() {
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === 'superadmin';
+
+  // data
   const [rows, setRows] = useState([]);
+
+  // ui
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
   const [q, setQ] = useState('');
 
-  const [modalOpen, setModalOpen] = useState(false);
+  // modal
+  const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
-  const [name, setName] = useState('');
 
-  function openCreate() { setEditRow(null); setName(''); setModalOpen(true); }
-  function openEdit(u) { setEditRow(u); setName(u.name || ''); setModalOpen(true); }
-  function closeModal() { setModalOpen(false); setEditRow(null); setName(''); }
+  /* ---------- bootstrap ---------- */
+  async function fetchMe() {
+    try {
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      // keep null; page will act read-only
+    }
+  }
 
   async function refresh() {
-    setLoading(true); setErr(''); setOk('');
     try {
+      setLoading(true);
+      setErr(''); setOk('');
       const r = await api.get('/units');
-      const data = r?.data?.data ?? r?.data ?? [];
-      const list = Array.isArray(data) ? data : [];
-      list.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
-      setRows(list);
+      const list = r?.data?.data ?? r?.data ?? [];
+      setRows(Array.isArray(list) ? list : []);
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Error fetching units');
+      setErr(e?.response?.data?.message || e?.message || 'Error loading units');
     } finally {
       setLoading(false);
     }
   }
 
-  async function search(nameQuery) {
-    const term = nameQuery.trim();
-    if (!term) return refresh();
-    setLoading(true); setErr(''); setOk('');
-    try {
-      const r = await api.get('/units/search', { params: { name: term } });
-      const data = r?.data?.data ?? r?.data ?? [];
-      const list = Array.isArray(data) ? data : [];
-      list.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
-      setRows(list);
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Search failed');
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => { fetchMe(); refresh(); }, []);
 
-  useEffect(() => { refresh(); }, []);
-
+  /* ---------- derived ---------- */
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter(u => (u.name || '').toLowerCase().includes(term));
   }, [rows, q]);
 
-  async function save() {
-    try {
-      setErr(''); setOk('');
-      const body = { name: name.trim() };
-      if (!body.name) { setErr('Name is required'); return; }
+  /* ---------- fields ---------- */
+  const FIELDS = [{ name: 'name', type: 'text', label: 'Unit Name (e.g., KG, BORI)', required: true }];
 
+  const sanitize = (fields, payload) => {
+    const allow = new Set(fields.map(f => f.name));
+    const out = {};
+    Object.keys(payload || {}).forEach(k => {
+      const v = payload[k];
+      if (allow.has(k) && v !== '' && v != null) out[k] = v;
+    });
+    return out;
+  };
+
+  /* ---------- actions (superadmin only) ---------- */
+  function openCreate() {
+    if (!isSuper) { setErr('Only Super Admin can create units'); return; }
+    setEditRow(null);
+    setOpen(true);
+  }
+  function openEdit(row) {
+    if (!isSuper) { setErr('Only Super Admin can edit units'); return; }
+    setEditRow(row);
+    setOpen(true);
+  }
+
+  async function handleSubmit(form) {
+    try {
+      if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
+      setErr(''); setOk('');
+      const body = sanitize(FIELDS, form);
       if (editRow?.id) {
         await api.put(`/units/${editRow.id}`, body);
         setOk('Unit updated');
@@ -114,53 +103,67 @@ export default function ProductUnitsPage() {
         await api.post('/units', body);
         setOk('Unit created');
       }
-      closeModal();
+      setOpen(false); setEditRow(null);
       await refresh();
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Save failed');
+      setErr(e?.response?.data?.message || e?.message || 'Action failed');
     }
   }
 
-  async function onDelete(u) {
-    if (!window.confirm(`Delete unit "${u.name}"?`)) return;
+  async function handleDelete(row) {
+    if (!isSuper) { setErr('Only Super Admin can delete units'); return; }
+    if (!window.confirm(`Delete unit "${row.name}"?`)) return;
     try {
-      await api.delete(`/units/${u.id}`);
+      setErr(''); setOk('');
+      await api.delete(`/units/${row.id}`);
+      setOk('Unit deleted');
       await refresh();
     } catch (e) {
-      alert(e?.response?.data?.message || e?.message || 'Delete failed');
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
     }
   }
 
+  /* ---------- render ---------- */
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="rounded-3xl border border-slate-200 bg-white/70 backdrop-blur p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Product Units</h1>
-            <p className="text-sm text-slate-500">Create and manage units (e.g., KG, BORI).</p>
+            <p className="text-sm text-slate-500">
+              {isSuper
+                ? 'Create and manage units (e.g., KG, BORI).'
+                : 'Browse available units (read-only).'}
+            </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={q}
-              onChange={(e)=> setQ(e.target.value)}
-              onKeyDown={(e)=> { if (e.key === 'Enter') search(q); }}
-              placeholder="Search units…"
-              className="w-56 rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
-            />
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <div className="flex w-full items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm sm:w-auto">
+              <Search size={16} className="text-slate-400" />
+              <input
+                value={q}
+                onChange={(e)=> setQ(e.target.value)}
+                placeholder="Search units…"
+                className="w-full sm:w-64 bg-transparent outline-none text-sm"
+              />
+            </div>
+
             <button
-              onClick={() => search(q)}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+              onClick={refresh}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
             >
               <RefreshCw size={16}/> Search/Refresh
             </button>
-            <button
-              onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16}/> New Unit
-            </button>
+
+            {isSuper && (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16}/> New Unit
+              </button>
+            )}
           </div>
         </div>
 
@@ -172,11 +175,11 @@ export default function ProductUnitsPage() {
         )}
       </div>
 
-      {/* List */}
+      {/* Cards */}
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(6)].map((_,i)=>(
-            <div key={i} className="h-24 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {[...Array(4)].map((_,i)=>(
+            <div key={i} className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
           ))}
         </div>
       ) : filtered.length === 0 ? (
@@ -184,37 +187,56 @@ export default function ProductUnitsPage() {
           No units found.
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map(u => (
-            <UnitRow key={u.id} u={u} onEdit={openEdit} onDelete={onDelete} />
+            <div
+              key={u.id}
+              className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white/80 p-4"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white">
+                    <Layers size={18}/>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-semibold text-slate-900">{u.name || '—'}</h3>
+                    <p className="text-xs text-slate-500">
+                      ID: {u.id ?? '—'} • Updated {prettyDate(u.updatedAt)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {isSuper && (
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    onClick={() => openEdit(u)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                  >
+                    <Pencil size={16}/> Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(u)}
+                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                  >
+                    <Trash2 size={16}/> Delete
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
 
       {/* Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">{editRow ? 'Edit Unit' : 'Create Unit'}</h3>
-
-            <label className="block text-sm text-slate-600 mb-1">Name *</label>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e)=> setName(e.target.value)}
-              className="w-full rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200"
-              placeholder="e.g., KG"
-            />
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button onClick={closeModal} className="rounded-xl border bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
-              <button onClick={save} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
-                {editRow ? 'Save' : 'Create'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <FormModal
+        title={editRow ? 'Edit Unit' : 'Create Unit'}
+        open={open}
+        onClose={()=>{ setOpen(false); setEditRow(null); }}
+        fields={FIELDS}
+        initial={editRow || {}}
+        onSubmit={handleSubmit}
+      />
     </div>
   );
 }

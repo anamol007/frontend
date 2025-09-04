@@ -1,3 +1,4 @@
+// src/pages/UsersPage.jsx
 // src/pages/Users.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { User as UserIcon, Search, Plus, RefreshCw, Pencil, Trash2, Building2, ShieldAlert } from 'lucide-react';
@@ -32,12 +33,16 @@ export default function UsersPage() {
   const [roleFilter, setRoleFilter] = useState('');
 
   // modal state
-  const [modalOpen, setModalOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);           // create/edit modal
   const [editRow, setEditRow] = useState(null);
 
-  // role “watchers” for conditional fields
-  const [createRole, setCreateRole] = useState('user');
-  const [editRole, setEditRole] = useState('user');
+  // second step modal for assigning inventory when creating an Admin
+  const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
+  const [pendingCreate, setPendingCreate] = useState(null);    // holds first-step payload until inventory picked
+
+  // role “watchers” for dynamic fields in CREATE and EDIT
+  const [createRole, setCreateRole] = useState('driver');      // default role now 'driver'
+  const [editRole, setEditRole] = useState('driver');
 
   // -------- fetch signed-in user + their managed inventories (if admin)
   async function fetchMe() {
@@ -56,7 +61,6 @@ export default function UsersPage() {
         setMyManagedInvs(invs);
       }
     } catch (e) {
-      // if verify fails, leave me = null; the page will likely be protected by router anyway
       setErr(e?.response?.data?.message || e?.message || 'Error verifying session');
     }
   }
@@ -117,35 +121,27 @@ export default function UsersPage() {
     return visibleInvOptions.filter(o => !owned.has(String(o.value)));
   }, [visibleInvOptions, editRow]);
 
-  // Field sets (only used for superadmin flows)
-  const CREATE_FIELDS = useMemo(() => {
-    const fields = [
-      { name: 'fullname', type: 'text', label: 'Full name', required: true },
-      { name: 'email', type: 'email', label: 'Email', required: true },
-      { name: 'password', type: 'password', label: 'Password', required: true },
-      {
-        name: 'role', type: 'select', label: 'Role', required: true,
-        options: [
-          { value: 'user',       label: 'User' },
-          { value: 'admin',      label: 'Admin' },
-          { value: 'superadmin', label: 'Super Admin' },
-        ],
-        onChange: (e) => setCreateRole(e.target.value),
-      },
-    ];
-    if (createRole === 'admin') {
-      fields.push({
-        name: 'inventoryId',
-        type: 'select',
-        label: 'Managed Inventory (Admin only)',
-        required: true,
-        options: visibleInvOptions, // superadmin sees all; admin would see only theirs
-        helper: 'Choose the inventory this Admin will manage.',
-      });
-    }
-    return fields;
-  }, [visibleInvOptions, createRole]);
+  // ---------------------- FIELD DEFINITIONS ----------------------
+  // CREATE (step 1): Basic user info only. No inventory here anymore.
+  const CREATE_FIELDS = useMemo(() => ([
+    { name: 'fullname', type: 'text', label: 'Full name', required: true },
+    { name: 'email', type: 'email', label: 'Email', required: true },
+    { name: 'password', type: 'password', label: 'Password', required: true },
+    {
+      name: 'role',
+      type: 'select',
+      label: 'Role',
+      required: true,
+      options: [
+        { value: 'driver',     label: 'Driver' },     // changed from 'user'
+        { value: 'admin',      label: 'Admin' },
+        { value: 'superadmin', label: 'Super Admin' },
+      ],
+      onChange: (e) => setCreateRole(e.target.value),
+    },
+  ]), []);
 
+  // EDIT: keep ability to (optionally) reassign inventory when role === admin
   const EDIT_FIELDS = useMemo(() => {
     const fields = [
       { name: 'fullname', type: 'text', label: 'Full name' },
@@ -154,7 +150,7 @@ export default function UsersPage() {
       {
         name: 'role', type: 'select', label: 'Role',
         options: [
-          { value: 'user',       label: 'User' },
+          { value: 'driver',     label: 'Driver' },   // changed from 'user'
           { value: 'admin',      label: 'Admin' },
           { value: 'superadmin', label: 'Super Admin' },
         ],
@@ -179,6 +175,18 @@ export default function UsersPage() {
     return fields;
   }, [editRole, editInvOptions]);
 
+  // Step 2 modal fields (only used when creating Admins)
+  const INVENTORY_FIELDS = useMemo(() => ([
+    {
+      name: 'inventoryId',
+      type: 'select',
+      label: 'Select Inventory to manage',
+      required: true,
+      options: visibleInvOptions,
+      helper: 'This Admin will be assigned to manage this inventory.',
+    },
+  ]), [visibleInvOptions]);
+
   // sanitize payload to visible fields only
   function sanitize(fields, payload) {
     const allow = new Set(fields.map(f => f.name));
@@ -186,6 +194,16 @@ export default function UsersPage() {
     Object.entries(payload || {}).forEach(([k, v]) => {
       if (!allow.has(k)) return;
       if (v === '' || v === undefined) return;
+
+      if (k === 'inventoryId') {
+        if (v === 'null') {
+          out[k] = null;
+        } else {
+          const num = typeof v === 'number' ? v : Number(v);
+          out[k] = Number.isNaN(num) ? v : num;
+        }
+        return;
+      }
       out[k] = (v === 'null') ? null : v;
     });
     return out;
@@ -207,23 +225,59 @@ export default function UsersPage() {
   }
 
   // modal
-  function openCreate() { setCreateRole('user'); setEditRow(null); setModalOpen(true); }
-  function openEdit(row) { setEditRow(row); setEditRole(row?.role || 'user'); setModalOpen(true); }
+  function openCreate() { setCreateRole('driver'); setEditRow(null); setModalOpen(true); } // default 'driver'
+  function openEdit(row) { setEditRow(row); setEditRole(row?.role || 'driver'); setModalOpen(true); }
   function closeModal() { setEditRow(null); setModalOpen(false); }
 
   async function handleSubmit(form) {
     try {
       setErr(''); setOk('');
+
       if (editRow?.id) {
         const body = sanitize(EDIT_FIELDS, form);
         await updateUser(editRow.id, body);
         setOk('User updated');
-      } else {
-        const body = sanitize(CREATE_FIELDS, form);
-        await createUser(body);
-        setOk('User created');
+        closeModal();
+        await fetchAll();
+        return;
       }
+
+      // CREATE flow (step 1)
+      const body = sanitize(CREATE_FIELDS, form);
+      if (String(body.role) === 'admin') {
+        // open step 2: inventory picker, then create in its handler
+        setPendingCreate(body);
+        setModalOpen(false);
+        setInventoryModalOpen(true);
+        return;
+      }
+
+      // non-admin: create immediately
+      await createUser(body);
+      setOk('User created');
       closeModal();
+      await fetchAll();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Action failed');
+    }
+  }
+
+  // step 2: submit inventory selection for pending admin user
+  async function handleAssignInventory(form) {
+    try {
+      if (!pendingCreate) { setInventoryModalOpen(false); return; }
+      const invForm = sanitize(INVENTORY_FIELDS, form);
+      const inv = invForm.inventoryId;
+      if (inv === undefined || inv === null || Number.isNaN(Number(inv))) {
+        setErr('Please select an inventory to assign to the Admin.');
+        return;
+      }
+      const finalBody = { ...pendingCreate, inventoryId: Number(inv) };
+      setErr(''); setOk('');
+      await createUser(finalBody);
+      setOk('User created');
+      setPendingCreate(null);
+      setInventoryModalOpen(false);
       await fetchAll();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Action failed');
@@ -279,7 +333,7 @@ export default function UsersPage() {
                 className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
               >
                 <option value="">All roles</option>
-                <option value="user">User</option>
+                <option value="driver">Driver</option>{/* changed from 'user' */}
                 <option value="admin">Admin</option>
                 <option value="superadmin">Super Admin</option>
               </select>
@@ -386,9 +440,10 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Modal (superadmin only) */}
+      {/* Modal (superadmin only) - Step 1: Create/Edit */}
       {isSuper && (
         <FormModal
+          key={editRow ? `edit-${editRole}` : `create-${createRole}`} // force remount on role change
           title={editRow ? `Edit User: ${editRow.fullname}` : 'New User'}
           open={modalOpen}
           onClose={closeModal}
@@ -396,9 +451,21 @@ export default function UsersPage() {
           initial={
             editRow
               ? { fullname: editRow.fullname, email: editRow.email, role: editRow.role }
-              : { role: createRole }
+              : { role: 'driver' } // default now 'driver'
           }
           onSubmit={handleSubmit}
+        />
+      )}
+
+      {/* Modal (superadmin only) - Step 2: Assign Inventory for Admin */}
+      {isSuper && (
+        <FormModal
+          title="Assign Inventory to Admin"
+          open={inventoryModalOpen}
+          onClose={() => { setInventoryModalOpen(false); setPendingCreate(null); }}
+          fields={INVENTORY_FIELDS}
+          initial={{}}
+          onSubmit={handleAssignInventory}
         />
       )}
     </div>

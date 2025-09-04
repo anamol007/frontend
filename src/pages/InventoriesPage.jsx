@@ -157,6 +157,10 @@ function StatsPopup({ inv, stats, items, loading, onClose }) {
 
 // ---------- Main Page ----------
 export default function InventoriesPage() {
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === 'superadmin';
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -173,15 +177,26 @@ export default function InventoriesPage() {
   const [itemsCache, setItemsCache] = useState({});
   const [itemsLoading, setItemsLoading] = useState(false);
 
-  // --- Fetch list (/api/inventory/) ---
+  // --- Fetch me (role) + list ---
+  async function fetchMe() {
+    try {
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      // leave null -> read-only
+    }
+  }
+
   async function fetchAll() {
     setLoading(true); setErr(''); setOk('');
     try {
       // NOTE: Swagger uses /inventory/ (with trailing slash). Our api instance already prefixes /api.
       const r = await api.get('/inventory/');
       const data = r?.data?.data ?? r?.data ?? [];
-      // sort by name for consistency
-      const sorted = Array.isArray(data) ? [...data].sort((a,b)=>String(a.inventoryName||'').localeCompare(String(b.inventoryName||''))) : [];
+      const sorted = Array.isArray(data)
+        ? [...data].sort((a,b)=>String(a.inventoryName||'').localeCompare(String(b.inventoryName||'')))
+        : [];
       setRows(sorted);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Failed to load inventories');
@@ -189,7 +204,8 @@ export default function InventoriesPage() {
       setLoading(false);
     }
   }
-  useEffect(()=>{ fetchAll(); },[]);
+
+  useEffect(()=>{ fetchMe(); fetchAll(); },[]);
 
   // search
   const filtered = useMemo(() => {
@@ -202,11 +218,18 @@ export default function InventoriesPage() {
     );
   }, [rows, q]);
 
-  // --- CRUD actions ---
-  const openCreate = () => { setEditRow(null); setModalOpen(true); };
-  const openEdit = (row) => { setEditRow(row); setModalOpen(true); };
+  // --- CRUD actions (superadmin only) ---
+  const openCreate = () => {
+    if (!isSuper) { setErr('Only Super Admin can create inventories'); return; }
+    setEditRow(null); setModalOpen(true);
+  };
+  const openEdit = (row) => {
+    if (!isSuper) { setErr('Only Super Admin can edit inventories'); return; }
+    setEditRow(row); setModalOpen(true);
+  };
 
   async function handleSubmit(form) {
+    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
     setErr(''); setOk('');
     try {
       const body = sanitize(form);
@@ -226,6 +249,7 @@ export default function InventoriesPage() {
   }
 
   async function handleDelete(row) {
+    if (!isSuper) { setErr('Only Super Admin can delete inventories'); return; }
     if (!window.confirm(`Delete inventory "${row.inventoryName}"?`)) return;
     setErr(''); setOk('');
     try {
@@ -237,7 +261,7 @@ export default function InventoriesPage() {
     }
   }
 
-  // --- Stats popup loaders ---
+  // --- Stats popup loaders (allowed for all roles) ---
   async function openStatsFor(row) {
     setOpenStats(row);
     try {
@@ -265,7 +289,9 @@ export default function InventoriesPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Inventories</h1>
-            <p className="text-sm text-slate-500">Create, edit, and inspect inventory stats & items.</p>
+            <p className="text-sm text-slate-500">
+              {isSuper ? 'Create, edit, and inspect inventory stats & items.' : 'Browse and inspect inventory stats & items.'}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
@@ -283,12 +309,14 @@ export default function InventoriesPage() {
             >
               <RefreshCw size={16} /> Refresh
             </button>
-            <button
-              onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16} /> New Inventory
-            </button>
+            {isSuper && (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16} /> New Inventory
+              </button>
+            )}
           </div>
         </div>
         {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
@@ -332,20 +360,23 @@ export default function InventoriesPage() {
               </div>
 
               <div className="mt-4 flex justify-between gap-2">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openEdit(inv)}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                  >
-                    <Pencil size={16}/> Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(inv)}
-                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                  >
-                    <Trash2 size={16}/> Delete
-                  </button>
-                </div>
+                {isSuper ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEdit(inv)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <Pencil size={16}/> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(inv)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    >
+                      <Trash2 size={16}/> Delete
+                    </button>
+                  </div>
+                ) : <span />}
+
                 <button
                   onClick={() => openStatsFor(inv)}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"

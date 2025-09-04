@@ -1,3 +1,4 @@
+// src/components/Topbar.jsx
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDown, LogOut, User2 } from 'lucide-react';
@@ -16,6 +17,7 @@ const TITLES = {
   drivers: 'Drivers',
   deliveries: 'Deliveries',
   summary: 'Summary',
+  'my-profile': 'My Profile', // ✅
 };
 
 export default function Topbar() {
@@ -59,6 +61,12 @@ export default function Topbar() {
               <div className="px-3 py-2 text-xs text-slate-500">
                 Signed in as <span className="text-slate-800">{me?.email || '—'}</span>
               </div>
+              <button
+                onClick={() => { setMenuOpen(false); navigate('/dashboard/my-profile'); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
+              >
+                <User2 size={14} /> My Profile
+              </button>
               <div className="my-1 h-px bg-slate-200" />
               <button
                 onClick={logout}

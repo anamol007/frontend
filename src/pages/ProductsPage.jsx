@@ -17,7 +17,7 @@ function Modal({ open, onClose, title, children, footer }) {
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X size={18} /></button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        <div className="max-h-[80vh] overflow-y-auto px-5 py-4">{children}</div>
         {footer && <div className="border-t px-5 py-4">{footer}</div>}
       </div>
     </div>
@@ -54,6 +54,10 @@ export default function ProductsPage() {
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
 
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === 'superadmin';
+
   // product create/edit modal
   const [openEdit, setOpenEdit] = useState(false);
   const [editing, setEditing] = useState(null); // product | null
@@ -67,6 +71,17 @@ export default function ProductsPage() {
   const [unitsForProduct, setUnitsForProduct] = useState([]); // [{id, unit:{id,name}, rate}]
   const [unitsProduct, setUnitsProduct] = useState(null); // product row
   const [addUnitRow, setAddUnitRow] = useState({ unit_id: '', rate: '' });
+
+  // who am I?
+  async function fetchMe() {
+    try {
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      // ignore; page still works read-only
+    }
+  }
 
   // fetchers
   async function fetchProducts() {
@@ -103,6 +118,7 @@ export default function ProductsPage() {
   }
 
   useEffect(() => {
+    fetchMe();
     fetchProducts();
     fetchUnits();
     fetchCategories();
@@ -121,6 +137,7 @@ export default function ProductsPage() {
 
   // open create
   const openCreate = () => {
+    if (!isSuper) { setErr('Only Super Admin can create products'); return; }
     setEditing(null);
     setForm({ productName: '', description: '', category_id: '' });
     setInitUnits([]);
@@ -129,6 +146,7 @@ export default function ProductsPage() {
 
   // open edit
   const openEditProduct = (p) => {
+    if (!isSuper) { setErr('Only Super Admin can edit products'); return; }
     setEditing(p);
     setForm({
       productName: p.productName || '',
@@ -142,6 +160,7 @@ export default function ProductsPage() {
   // create/edit submit
   async function submitProduct(e) {
     e.preventDefault();
+    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
     setErr(''); setOk('');
     try {
       const body = {
@@ -173,6 +192,7 @@ export default function ProductsPage() {
 
   // delete product
   async function deleteProduct(p) {
+    if (!isSuper) { setErr('Only Super Admin can delete products'); return; }
     if (!window.confirm(`Delete product "${p.productName}"? This cannot be undone.`)) return;
     setErr(''); setOk('');
     try {
@@ -186,6 +206,7 @@ export default function ProductsPage() {
 
   // units manager
   async function openUnitsManager(p) {
+    if (!isSuper) { setErr('Only Super Admin can manage unit rates'); return; }
     setUnitsProduct(p);
     setUnitsForProduct([]);
     setAddUnitRow({ unit_id: '', rate: '' });
@@ -200,6 +221,7 @@ export default function ProductsPage() {
   }
 
   async function addUnitToProduct() {
+    if (!isSuper) { setErr('Only Super Admin can add unit rates'); return; }
     setErr(''); setOk('');
     try {
       const unit_id = Number(addUnitRow.unit_id);
@@ -218,6 +240,7 @@ export default function ProductsPage() {
   }
 
   async function updateUnitRate(puId, newRate) {
+    if (!isSuper) { setErr('Only Super Admin can update unit rates'); return; }
     setErr(''); setOk('');
     try {
       await api.put(`/product-units/${puId}`, { rate: Number(newRate) });
@@ -228,6 +251,7 @@ export default function ProductsPage() {
   }
 
   async function removeUnitFromProduct(puId) {
+    if (!isSuper) { setErr('Only Super Admin can remove unit rates'); return; }
     if (!window.confirm('Remove this unit from product?')) return;
     setErr(''); setOk('');
     try {
@@ -249,16 +273,18 @@ export default function ProductsPage() {
             <h1 className="text-2xl font-semibold text-slate-900 flex items-center gap-2">
               <Package2 className="text-indigo-600" /> Products
             </h1>
-            <p className="text-sm text-slate-500">Browse, create, edit, and manage unit rates.</p>
+            <p className="text-sm text-slate-500">
+              {isSuper ? 'Browse, create, edit, and manage unit rates.' : 'Browse products and unit rates (read-only).'}
+            </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            <div className="flex w-full items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm sm:w-auto">
               <Search size={16} className="text-slate-400" />
               <input
                 value={q}
                 onChange={(e)=> setQ(e.target.value)}
                 placeholder="Search product, category…"
-                className="w-60 bg-transparent outline-none text-sm"
+                className="w-full sm:w-60 bg-transparent outline-none text-sm"
               />
             </div>
             <button
@@ -267,12 +293,14 @@ export default function ProductsPage() {
             >
               <RefreshCw size={16} /> Refresh
             </button>
-            <button
-              onClick={openCreate}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16} /> New Product
-            </button>
+            {isSuper && (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16} /> New Product
+              </button>
+            )}
           </div>
         </div>
         {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
@@ -281,7 +309,7 @@ export default function ProductsPage() {
 
       {/* grid */}
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[...Array(6)].map((_,i)=>(
             <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
           ))}
@@ -291,7 +319,7 @@ export default function ProductsPage() {
           No products found.
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map(p => (
             <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
               <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
@@ -320,27 +348,29 @@ export default function ProductsPage() {
                 )}
               </div>
 
-              {/* actions */}
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={() => openUnitsManager(p)}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                >
-                  <DollarSign size={16} /> Manage Units
-                </button>
-                <button
-                  onClick={() => openEditProduct(p)}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                >
-                  <Pencil size={16} /> Edit
-                </button>
-                <button
-                  onClick={() => deleteProduct(p)}
-                  className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                >
-                  <Trash2 size={16} /> Delete
-                </button>
-              </div>
+              {/* actions (superadmin only) */}
+              {isSuper && (
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    onClick={() => openUnitsManager(p)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                  >
+                    <DollarSign size={16} /> Manage Units
+                  </button>
+                  <button
+                    onClick={() => openEditProduct(p)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                  >
+                    <Pencil size={16} /> Edit
+                  </button>
+                  <button
+                    onClick={() => deleteProduct(p)}
+                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                  >
+                    <Trash2 size={16} /> Delete
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -394,7 +424,7 @@ export default function ProductsPage() {
               <div className="mb-2 text-sm font-medium text-slate-700">Initial Units (optional)</div>
               <div className="grid gap-2">
                 {initUnits.map((row, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
+                  <div key={idx} className="flex flex-wrap items-center gap-2">
                     <select
                       className="w-48 rounded-xl border bg-white px-3 py-2"
                       value={row.unit_id}
@@ -431,7 +461,7 @@ export default function ProductsPage() {
                   onClick={()=> setInitUnits(list => [...list, { unit_id: '', rate: '' }])}
                   className="inline-flex w-fit items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                 >
-                  <Plus size={16}/> Add unit & rate
+                  <Plus size={16}/> Add unit &amp; rate
                 </button>
               </div>
               <p className="mt-2 text-xs text-slate-500">You can also add/edit rates later with “Manage Units”.</p>

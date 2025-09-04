@@ -21,12 +21,10 @@ const prettyDateTime = (d) => {
 
 /** Normalize one aggregated row returned by GET /stock */
 const normAgg = (row = {}) => {
-  // safer accessors
   const pid  = row.product_id  ?? (row.product?.id  ?? null);
   const iid  = row.inventory_id?? (row.inventory?.id?? null);
   const uid  = row.unit_id     ?? (row.unit?.id     ?? null);
 
-  // available quantity from aggregation
   const avail = Number(
     row.availableQuantity ??
     row.totalAvailableQuantity ??
@@ -46,7 +44,6 @@ const normAgg = (row = {}) => {
   };
 };
 
-/** Build distinct options from aggregated list for new stock modal */
 const buildSelects = (rows=[]) => {
   const products = new Map();
   const inventories = new Map();
@@ -66,42 +63,30 @@ const buildSelects = (rows=[]) => {
   };
 };
 
-// If your DB requires a specific "method" value, adjust here.
-// Example choices:
-//   - STRING enum: 'manual' | 'transfer' | 'adjust'
-//   - NUM code: 0 | 1 | 2
-const METHOD_FOR_CREATE = undefined; // e.g. 'manual' or 0
-const METHOD_FOR_ADJUST = undefined; // e.g. 'adjust' or 2
+// 🔒 Read-only mode (everyone)
+const CAN_MANAGE = false;
 
 export default function StockPage() {
-  // aggregated stock rows
   const [rows, setRows] = useState([]);
-  // UI state
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
 
-  // filters
   const [q, setQ] = useState('');
   const [invFilter, setInvFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
-
-  // expansion state (product ids grouped)
   const [openKeys, setOpenKeys] = useState(new Set());
 
-  // modal state
   const [modalOpen, setModalOpen] = useState(false);
-  const [editRow, setEditRow] = useState(null);     // aggregated row (for Edit)
-  const [prefill, setPrefill] = useState(null);     // for "New Stock" quick-fill
+  const [editRow, setEditRow] = useState(null);
+  const [prefill, setPrefill] = useState(null);
 
   async function fetchAll() {
     try {
       setLoading(true); setErr(''); setOk('');
-      // Uses your /stock (getAllStock) endpoint that returns aggregated quantities with includes
       const r = await api.get('/stock/');
       const list = Array.isArray(r?.data?.data) ? r.data.data : (r?.data || []);
       const normalized = list.map(normAgg);
-      // sort for nicer UX
       normalized.sort((a,b)=> String(a.productName||'').localeCompare(String(b.productName||'')));
       setRows(normalized);
     } catch (e) {
@@ -112,9 +97,7 @@ export default function StockPage() {
   }
   useEffect(() => { fetchAll(); }, []);
 
-  // group by product to keep your existing look
   const grouped = useMemo(() => {
-    // group rows by product
     const map = new Map();
     rows.forEach(r => {
       if (invFilter && String(r.inventory_id) !== String(invFilter)) return;
@@ -143,11 +126,9 @@ export default function StockPage() {
       g.inventoriesCount = new Set(g.stocks.map(s=>s.inventory_id)).size;
       g.unitsCount = new Set(g.stocks.map(s=>s.unit_id)).size;
       g.rowsCount = g.stocks.length;
-      // latest update we can compute if present
       const ts = g.stocks.map(s => s.updatedAt).filter(Boolean).map(d=>+new Date(d));
       g.updatedAt = ts.length ? new Date(Math.max(...ts)).toISOString() : g.updatedAt;
     });
-    // sort by product name
     out.sort((a,b)=> String(a.productName||'').localeCompare(String(b.productName||'')));
     return out;
   }, [rows, q, invFilter, unitFilter]);
@@ -163,42 +144,7 @@ export default function StockPage() {
     setOpenKeys(s);
   };
 
-  // ---------- API calls (ONLY /stock) ----------
-  async function postStockTransaction({ product_id, inventory_id, unit_id, qty, direction, notes, methodOverride }) {
-    // Build body for /stock create
-    const body = {
-      stockQuantity: Number(qty),
-      unit_id,
-      product_id,
-      inventory_id,
-      in_out: direction, // 'in' | 'out'
-      notes: notes || undefined,
-    };
-    // Optionally pass a method if your DB requires strict values.
-    const m = methodOverride ?? (direction ? undefined : undefined);
-    if (m !== undefined) body.method = m;
-
-    return api.post('/stock/', body);
-  }
-
-  // ---------- Create / Edit flows ----------
-  function openCreate(prefillRow = null) {
-    setPrefill(prefillRow);
-    setEditRow(null);
-    setModalOpen(true);
-  }
-  function openEdit(row) {
-    setPrefill(null);
-    setEditRow(row);
-    setModalOpen(true);
-  }
-  function closeModal() {
-    setPrefill(null);
-    setEditRow(null);
-    setModalOpen(false);
-  }
-
-  // Fields
+  // (Management helpers exist but UI is hidden in read-only mode)
   const { productOptions, inventoryOptions, unitOptions } = useMemo(
     () => buildSelects(rows),
     [rows]
@@ -216,113 +162,7 @@ export default function StockPage() {
     { name: 'newQuantity', type: 'number', label: 'New quantity (final)', required: true, step: '0.01', min: '0' },
   ]), []);
 
-  function sanitize(fields, payload) {
-    const allow = new Set(fields.map(f => f.name));
-    const out = {};
-    Object.entries(payload || {}).forEach(([k, v]) => {
-      if (!allow.has(k)) return;
-      if (v === '' || v === undefined || v === null) return;
-      out[k] = v;
-    });
-    return out;
-  }
-
-  async function handleSubmit(form) {
-    try {
-      setErr(''); setOk('');
-
-      // CREATE: treat as IN transaction
-      if (!editRow) {
-        const body = sanitize(CREATE_FIELDS, form);
-        // force the prefilled ids when coming from a product row
-        if (prefill?.product_id)   body.product_id   = prefill.product_id;
-        if (prefill?.inventory_id) body.inventory_id = prefill.inventory_id;
-        if (prefill?.unit_id)      body.unit_id      = prefill.unit_id;
-
-        const qty = Number(body.stockQuantity || 0);
-        if (!(qty > 0)) throw new Error('Quantity must be greater than 0');
-
-        await postStockTransaction({
-          product_id: body.product_id,
-          inventory_id: body.inventory_id,
-          unit_id: body.unit_id,
-          qty,
-          direction: 'in',
-          notes: body.notes,
-          methodOverride: METHOD_FOR_CREATE,
-        });
-
-        setOk('Stock added');
-        closeModal();
-        await fetchAll();
-        return;
-      }
-
-      // EDIT: "new final quantity" -> derive delta
-      const body = sanitize(EDIT_FIELDS, form);
-      const newQ = Number(body.newQuantity);
-      const curQ = Number(editRow.stockQuantity || 0);
-      if (Number.isNaN(newQ)) throw new Error('Please enter a valid number');
-
-      const delta = newQ - curQ;
-
-      if (delta === 0) {
-        setOk('No changes');
-        closeModal();
-        return;
-      }
-
-      // If decrease, ask for a reason (blocking)
-      let notes = '';
-      let direction = 'in';
-      let qty = Math.abs(delta);
-
-      if (delta < 0) {
-        const reason = window.prompt('This reduces stock. Please enter a reason (required):');
-        if (!reason || !reason.trim()) {
-          setErr('Reduction cancelled — reason is required.');
-          return;
-        }
-        notes = reason.trim();
-        direction = 'out';
-      } else {
-        // optional note for increases
-        notes = window.prompt('Optional notes for this increase (press Cancel to skip):') || '';
-        direction = 'in';
-      }
-
-      // Send as a single /stock transaction
-      await postStockTransaction({
-        product_id: editRow.product_id,
-        inventory_id: editRow.inventory_id,
-        unit_id: editRow.unit_id,
-        qty,
-        direction,
-        notes,
-        methodOverride: METHOD_FOR_ADJUST,
-      });
-
-      setOk(delta > 0 ? `Added ${qty}` : `Reduced ${qty}`);
-      closeModal();
-      await fetchAll();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Action failed');
-    }
-  }
-
-  // Delete button stays (calls your delete endpoint if you keep it); or hide it if not wanted.
-  async function deleteStock(row) {
-    if (!window.confirm(`Delete the stock row for "${row.productName}" in "${row.inventoryName}" (${row.unitName})?`)) return;
-    try {
-      setErr(''); setOk('');
-      // If your backend doesn't allow deleting aggregated rows, remove this button.
-      await api.delete(`/stock/${row.id}`); // might be unsupported for aggregated — safe to ignore/remove.
-      setOk('Stock row deleted');
-      await fetchAll();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
-    }
-  }
+  function closeModal() { setPrefill(null); setEditRow(null); setModalOpen(false); }
 
   return (
     <div className="space-y-5">
@@ -334,7 +174,7 @@ export default function StockPage() {
               <Boxes size={20}/> Stock
             </h1>
             <p className="text-sm text-slate-500">
-              Uses only <code>/stock</code> API. Enter <strong>+</strong> to add, <strong>–</strong> to reduce. Reductions require a reason.
+              View-only snapshot from <code>/stock</code>. Editing is disabled.
             </p>
           </div>
 
@@ -376,12 +216,15 @@ export default function StockPage() {
               <RefreshCw size={16}/> Refresh
             </button>
 
-            <button
-              onClick={()=> openCreate(null)}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16}/> New Stock
-            </button>
+            {/* New Stock hidden in read-only mode */}
+            {CAN_MANAGE && (
+              <button
+                onClick={()=> {/* openCreate(null) */}}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16}/> New Stock
+              </button>
+            )}
           </div>
         </div>
 
@@ -470,51 +313,58 @@ export default function StockPage() {
                     <div className="px-4 pb-4">
                       <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
                         {/* sub header */}
-                        <div className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr] items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        <div className={`grid ${CAN_MANAGE ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500`}>
                           <span>Inventory</span>
                           <span>Unit</span>
                           <span>Quantity</span>
                           <span>Updated</span>
-                          <span className="text-right">Actions</span>
+                          {CAN_MANAGE && <span className="text-right">Actions</span>}
                         </div>
 
                         {/* sub rows */}
                         {(g.stocks.length === 0) ? (
                           <div className="px-3 py-3 text-sm text-slate-500">No stock rows for this product.</div>
                         ) : g.stocks.map(row => (
-                          <div key={row.key} className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr] items-center gap-3 border-t border-slate-200 px-3 py-2.5">
+                          <div key={row.key} className={`grid ${CAN_MANAGE ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 border-t border-slate-200 px-3 py-2.5`}>
                             <div className="min-w-0">
                               <div className="truncate text-sm text-slate-800">{row.inventoryName}</div>
                             </div>
                             <div className="text-sm text-slate-700">{row.unitName}</div>
                             <div className="text-sm font-semibold text-slate-900">{row.stockQuantity}</div>
                             <div className="text-xs text-slate-500">{prettyDateTime(row.updatedAt)}</div>
-                            <div className="flex justify-end gap-2">
-                              <button
-                                onClick={()=> openEdit(row)}
-                                className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
-                              >
-                                <Pencil size={14}/> Edit
-                              </button>
-                              <button
-                                onClick={()=> deleteStock(row)}
-                                className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
-                              >
-                                <Trash2 size={14}/> Delete
-                              </button>
-                            </div>
+
+                            {/* Actions hidden in read-only mode */}
+                            {CAN_MANAGE && (
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={()=> {/* openEdit(row) */}}
+                                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                                >
+                                  <Pencil size={14}/> Edit
+                                </button>
+                                <button
+                                  onClick={()=> {/* deleteStock(row) */}}
+                                  className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+                                >
+                                  <Trash2 size={14}/> Delete
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
 
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          onClick={()=> openCreate({ product_id: g.productId })}
-                          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-                        >
-                          <Plus size={16}/> Add stock for “{g.productName}”
-                        </button>
-                      </div>
+                      {/* Add stock button hidden in read-only mode */}
+                      {CAN_MANAGE && (
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            onClick={()=> {/* openCreate({ product_id: g.productId }) */}}
+                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                          >
+                            <Plus size={16}/> Add stock for “{g.productName}”
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </li>
@@ -528,25 +378,27 @@ export default function StockPage() {
         )}
       </div>
 
-      {/* Modal */}
-      <FormModal
-        title={editRow ? 'Edit Stock' : 'New Stock Transaction'}
-        open={modalOpen}
-        onClose={closeModal}
-        fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-        initial={
-          editRow
-            ? { newQuantity: editRow.stockQuantity }
-            : (prefill
-                ? {
-                    product_id: prefill.product_id ?? undefined,
-                    inventory_id: prefill.inventory_id ?? undefined,
-                    unit_id: prefill.unit_id ?? undefined
-                  }
-                : {})
-        }
-        onSubmit={handleSubmit}
-      />
+      {/* Modal is not rendered in read-only mode */}
+      {CAN_MANAGE && (
+        <FormModal
+          title={editRow ? 'Edit Stock' : 'New Stock Transaction'}
+          open={modalOpen}
+          onClose={closeModal}
+          fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
+          initial={
+            editRow
+              ? { newQuantity: editRow.stockQuantity }
+              : (prefill
+                  ? {
+                      product_id: prefill.product_id ?? undefined,
+                      inventory_id: prefill.inventory_id ?? undefined,
+                      unit_id: prefill.unit_id ?? undefined
+                    }
+                  : {})
+          }
+          onSubmit={() => {}}
+        />
+      )}
     </div>
   );
 }

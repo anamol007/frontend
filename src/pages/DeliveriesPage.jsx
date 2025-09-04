@@ -64,7 +64,7 @@ function RowKV({ k, v }) {
   );
 }
 
-function DeliveryCard({ d, onEdit, onDelete, onView }) {
+function DeliveryCard({ d, onEdit, onDelete, onView, canManage }) {
   const od = norm(d);
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
@@ -104,18 +104,22 @@ function DeliveryCard({ d, onEdit, onDelete, onView }) {
         >
           <Info size={16} /> View
         </button>
-        <button
-          onClick={() => onEdit(od)}
-          className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-        >
-          <Pencil size={16} /> Edit
-        </button>
-        <button
-          onClick={() => onDelete(od)}
-          className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-        >
-          <Trash2 size={16} /> Delete
-        </button>
+        {canManage && (
+          <>
+            <button
+              onClick={() => onEdit(od)}
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <Pencil size={16} /> Edit
+            </button>
+            <button
+              onClick={() => onDelete(od)}
+              className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+            >
+              <Trash2 size={16} /> Delete
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -123,6 +127,10 @@ function DeliveryCard({ d, onEdit, onDelete, onView }) {
 
 /* ---------------- page ---------------- */
 export default function DeliveriesPage() {
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === 'superadmin';
+
   // data
   const [rows, setRows] = useState([]);
   const [drivers, setDrivers] = useState([]);
@@ -150,7 +158,20 @@ export default function DeliveriesPage() {
   // permissions / lazy orders loading
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersErr, setOrdersErr] = useState('');
-  const [canManage, setCanManage] = useState(true); // becomes false if /orders is forbidden
+  const [canManage, setCanManage] = useState(false); // toggled true for superadmin
+
+  // who am I?
+  async function fetchMe() {
+    try {
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+      setCanManage((u?.role || '') === 'superadmin');
+    } catch {
+      setMe(null);
+      setCanManage(false);
+    }
+  }
 
   // -------- fetch public data (deliveries + drivers)
   async function fetchPublic() {
@@ -170,30 +191,41 @@ export default function DeliveriesPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => { fetchMe(); }, []);
   useEffect(() => { fetchPublic(); }, []);
 
-  // -------- lazy load orders (admin-only). If forbidden, disable create/edit.
+  // 🔄 auto refresh
+  useEffect(() => {
+    const tick = () => { if (!loading) fetchPublic(); };
+    const id = setInterval(tick, 30000);
+    const onFocus = () => tick();
+    const onOnline = () => tick();
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [loading]);
+
+  // -------- lazy load orders (superadmin only). Use only confirmed for dropdown.
   async function ensureOrdersLoaded(currentOrderId) {
+    if (!isSuper) { setErr('Only Super Admin can manage deliveries'); return false; }
     if (orders.length > 0 || ordersLoading) return true;
     try {
       setOrdersErr('');
       setOrdersLoading(true);
-      const r = await api.get('/orders'); // admin-only per backend
+      const r = await api.get('/orders/status/confirmed');
       const data = Array.isArray(r?.data?.data) ? r.data.data : (r?.data || []);
       setOrders(data);
-      setCanManage(true);
       return true;
     } catch (e) {
-      const code = e?.response?.status;
-      if (code === 403) {
-        setCanManage(false);
-        setOrdersErr('Creating/updating deliveries requires admin access (orders list is restricted).');
-        if (currentOrderId && !orders.find(o => String(o?.id) === String(currentOrderId))) {
-          setOrders([{ id: currentOrderId }]);
-        }
-      } else {
-        setOrdersErr(e?.response?.data?.message || e?.message || 'Failed to load orders');
-      }
+      setOrdersErr(e?.response?.data?.message || e?.message || 'Failed to load orders');
       return false;
     } finally {
       setOrdersLoading(false);
@@ -244,9 +276,9 @@ export default function DeliveriesPage() {
 
   // STRICT fields: only those your backend accepts
   const FIELDS = useMemo(() => ([
-    { name: 'order_id',  type: 'select', label: 'Order',  required: true, options: orderOptions },
+    { name: 'order_id',  type: 'select', label: ordersLoading ? 'Order (loading...)' : 'Order',  required: true, options: orderOptions },
     { name: 'driver_id', type: 'select', label: 'Driver', required: true, options: driverOptions },
-  ]), [orderOptions, driverOptions]);
+  ]), [orderOptions, driverOptions, ordersLoading]);
 
   // sanitizer
   function sanitize(fields, payload) {
@@ -261,8 +293,9 @@ export default function DeliveriesPage() {
     return out;
   }
 
-  // submit
+  // submit (superadmin only)
   async function handleSubmit(form) {
+    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
     try {
       setErr(''); setOk('');
       const body = sanitize(FIELDS, form);
@@ -282,6 +315,7 @@ export default function DeliveriesPage() {
   }
 
   async function handleDelete(row) {
+    if (!isSuper) { setErr('Only Super Admin can delete deliveries'); return; }
     if (!window.confirm(`Delete delivery #${row.id}?`)) return;
     try {
       setErr(''); setOk('');
@@ -333,7 +367,11 @@ export default function DeliveriesPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Deliveries</h1>
-            <p className="text-sm text-slate-500">Link orders to drivers. Create, edit, filter and inspect.</p>
+            <p className="text-sm text-slate-500">
+              {isSuper
+                ? 'Link orders to drivers. Create, edit, filter and inspect.'
+                : 'Browse and inspect deliveries.'}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -368,16 +406,15 @@ export default function DeliveriesPage() {
               <RefreshCw size={16} /> Refresh
             </button>
 
-            {/* new */}
-            <button
-              onClick={openCreate}
-              disabled={!canManage}
-              title={!canManage ? 'Admin access required (orders are restricted)' : ''}
-              className={`inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md
-                ${canManage ? 'bg-gradient-to-r from-indigo-600 to-violet-600' : 'bg-slate-300 cursor-not-allowed'}`}
-            >
-              <Plus size={16} /> New Delivery
-            </button>
+            {/* new (superadmin only) */}
+            {isSuper && (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16} /> New Delivery
+              </button>
+            )}
           </div>
         </div>
 
@@ -414,12 +451,13 @@ export default function DeliveriesPage() {
               onEdit={openEdit}
               onDelete={handleDelete}
               onView={openView}
+              canManage={isSuper}
             />
           ))}
         </div>
       )}
 
-      {/* Create/Edit Modal */}
+      {/* Create/Edit Modal (superadmin only, but guarded too) */}
       <FormModal
         title={editRow ? 'Edit Delivery' : 'Create Delivery'}
         open={openForm}
