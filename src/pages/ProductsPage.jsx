@@ -95,7 +95,7 @@ export default function ProductsPage() {
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Failed to load products');
     } finally {
-      setLoading(false);
+           setLoading(false);
     }
   }
 
@@ -350,22 +350,22 @@ export default function ProductsPage() {
 
               {/* actions (superadmin only) */}
               {isSuper && (
-                <div className="mt-4 flex justify-end gap-2">
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
                   <button
                     onClick={() => openUnitsManager(p)}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
                   >
                     <DollarSign size={16} /> Manage Units
                   </button>
                   <button
                     onClick={() => openEditProduct(p)}
-                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
                   >
                     <Pencil size={16} /> Edit
                   </button>
                   <button
                     onClick={() => deleteProduct(p)}
-                    className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
                   >
                     <Trash2 size={16} /> Delete
                   </button>

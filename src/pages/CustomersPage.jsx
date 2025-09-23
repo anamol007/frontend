@@ -279,9 +279,6 @@ export default function CustomersPage() {
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-                <div className="text-xs text-slate-400">
-                  {c.coordinateId != null ? 'Has coordinates' : 'No coordinates'}
-                </div>
 
                 {/* Actions: superadmin only */}
                 {isSuper ? (

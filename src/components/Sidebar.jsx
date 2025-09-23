@@ -118,7 +118,7 @@ export default function Sidebar() {
           <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Transactions</div>
           <div className="mt-2 px-2">
             <Item to="/dashboard/inventories" icon={Map} label="Inventories" />
-            <Item to="/dashboard/transfers" icon={ArrowLeftRight} label="Transfers" />
+            {/* <Item to="/dashboard/transfers" icon={ArrowLeftRight} label="Transfers" /> */}
             <Item to="/dashboard/stock" icon={Boxes} label="Stock" />
             <Item to="/dashboard/drivers" icon={Truck} label="Drivers" />
             <Item to="/dashboard/deliveries" icon={ClipboardList} label="Deliveries" />
