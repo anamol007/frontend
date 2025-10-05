@@ -37,6 +37,26 @@ const norm = (d = {}) => ({
 
 const sortByLabel = (a, b) => a.label.localeCompare(b.label);
 
+/* throttle a batch of promises */
+async function pMap(items, mapper, { concurrency = 5 } = {}) {
+  const ret = [];
+  let i = 0;
+  let active = 0;
+  return new Promise((resolve, reject) => {
+    const next = () => {
+      if (i >= items.length && active === 0) return resolve(ret);
+      while (active < concurrency && i < items.length) {
+        const idx = i++;
+        active++;
+        Promise.resolve(mapper(items[idx], idx))
+          .then((val) => { ret[idx] = val; active--; next(); })
+          .catch((err) => { active--; reject(err); });
+      }
+    };
+    next();
+  });
+}
+
 /* ---------------- UI bits ---------------- */
 function Pill({ children }) {
   return (
@@ -160,6 +180,11 @@ export default function DeliveriesPage() {
   const [ordersErr, setOrdersErr] = useState('');
   const [canManage, setCanManage] = useState(false); // toggled true for superadmin
 
+  // 🔒 admin inventory filtering state
+  const [myInvId, setMyInvId] = useState(null);            // the single inventory admin can see
+  const [orderInvMap, setOrderInvMap] = useState({});      // orderId -> inventoryId
+  const [filterResolving, setFilterResolving] = useState(false);
+
   // who am I?
   async function fetchMe() {
     try {
@@ -192,8 +217,66 @@ export default function DeliveriesPage() {
     }
   }
 
+  // 🔎 find the admin's inventory (using your /summary endpoint)
+  async function resolveMyInventoryIdIfNeeded() {
+    if (isSuper || myInvId != null) return myInvId;
+    try {
+      const res = await api.get('/summary', { params: { period: 'all' } });
+      const invs = res?.data?.data?.inventories || [];
+      const first = invs[0]?.inventoryId ?? invs[0]?.id;
+      if (first) setMyInvId(Number(first));
+      return first || null;
+    } catch {
+      // keep null; filtering will show nothing for admins if we can't confirm inventory
+      return null;
+    }
+  }
+
+  // 📦 build a map orderId -> inventoryId (for client filtering)
+  async function buildOrderInventoryMap(orderIds) {
+    const uniq = Array.from(new Set(orderIds.filter(Boolean).map(Number)));
+    const missing = uniq.filter((id) => !(id in orderInvMap));
+    if (missing.length === 0) return orderInvMap;
+
+    setFilterResolving(true);
+    const nextMap = { ...orderInvMap };
+
+    try {
+      await pMap(missing, async (id) => {
+        try {
+          const r = await api.get(`/orders/${id}`);
+          const order = r?.data?.data || r?.data;
+          const invId = order?.inventory?.id ?? order?.inventoryId ?? order?.inventory_id ?? null;
+          if (invId != null) nextMap[id] = Number(invId);
+        } catch {
+          // leave undefined; those rows will be excluded for admins
+        }
+      }, { concurrency: 5 });
+
+      setOrderInvMap(nextMap);
+      return nextMap;
+    } finally {
+      setFilterResolving(false);
+    }
+  }
+
+  // initial loads
   useEffect(() => { fetchMe(); }, []);
   useEffect(() => { fetchPublic(); }, []);
+
+  // when rows change & user is admin, fetch mapping and inventory id
+  useEffect(() => {
+    (async () => {
+      if (!rows.length) return;
+      // resolve admin inventory
+      const invId = await resolveMyInventoryIdIfNeeded();
+      if (isSuper || !invId) return;
+      // fetch order → inventory mapping
+      const ids = rows.map((r) => r.order_id || r.order?.id).filter(Boolean);
+      if (ids.length) await buildOrderInventoryMap(ids);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, isSuper]);
 
   // 🔄 auto refresh
   useEffect(() => {
@@ -214,7 +297,7 @@ export default function DeliveriesPage() {
   }, [loading]);
 
   // -------- lazy load orders (superadmin only). Use only confirmed for dropdown.
-  async function ensureOrdersLoaded(currentOrderId) {
+  async function ensureOrdersLoaded() {
     if (!isSuper) { setErr('Only Super Admin can manage deliveries'); return false; }
     if (orders.length > 0 || ordersLoading) return true;
     try {
@@ -255,9 +338,21 @@ export default function DeliveriesPage() {
     return opts.sort(sortByLabel);
   }, [orders]);
 
+  // base list for role: superadmin = everything; admin = only my inventory
+  const roleScopedRows = useMemo(() => {
+    if (isSuper) return rows;
+    if (!myInvId) return []; // cannot determine admin’s inventory → show nothing (safe)
+    // keep if orderInvMap says this order belongs to myInvId
+    return rows.filter((r) => {
+      const oid = r.order_id || r.order?.id;
+      const invId = oid ? orderInvMap[oid] : null;
+      return invId === myInvId;
+    });
+  }, [rows, isSuper, myInvId, orderInvMap]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    let list = rows;
+    let list = roleScopedRows;
     if (driverFilter) {
       list = list.filter((d) => {
         const id = d?.driver_id ?? d?.driverId ?? d?.driver?.id;
@@ -272,7 +367,7 @@ export default function DeliveriesPage() {
         `${nd.driver?.user?.fullname || ''} ${nd.order?.product?.productName || ''}`;
       return hay.toLowerCase().includes(query);
     });
-  }, [rows, q, driverFilter]);
+  }, [roleScopedRows, q, driverFilter]);
 
   // STRICT fields: only those your backend accepts
   const FIELDS = useMemo(() => ([
@@ -335,7 +430,7 @@ export default function DeliveriesPage() {
     setOpenForm(true);
   }
   async function openEdit(row) {
-    const ok = await ensureOrdersLoaded(row?.order_id);
+    const ok = await ensureOrdersLoaded();
     if (!ok) return;
     setEditRow(row);
     setOpenForm(true);
@@ -370,7 +465,7 @@ export default function DeliveriesPage() {
             <p className="text-sm text-slate-500">
               {isSuper
                 ? 'Link orders to drivers. Create, edit, filter and inspect.'
-                : 'Browse and inspect deliveries.'}
+                : 'Browse deliveries from your inventory.'}
             </p>
           </div>
 
@@ -427,6 +522,13 @@ export default function DeliveriesPage() {
             )}
             {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
             {ok  && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+          </div>
+        )}
+
+        {/* admin-only hint while filtering resolves */}
+        {!isSuper && (filterResolving || (rows.length && !Object.keys(orderInvMap).length)) && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            Filtering deliveries to your inventory…
           </div>
         )}
       </div>

@@ -34,7 +34,9 @@ function StatPill({ icon: Icon, label, value, tone = 'indigo' }) {
 export default function CustomersPage() {
   // who am I? (for role gating)
   const [me, setMe] = useState(null);
-  const isSuper = me?.role === 'superadmin';
+  const role = me?.role || '';
+  const isSuper = role === 'superadmin';
+  const isAdmin = role === 'admin';
 
   // data
   const [rows, setRows] = useState([]);
@@ -113,10 +115,11 @@ export default function CustomersPage() {
   // ---------- Fields (STRICT to backend spec)
   const COORD_OPTIONS = useMemo(() => coords.map(c => c.id).sort((a,b)=>a-b), [coords]);
 
+  // Backend requires fullname, phoneNumber, address (all required for create)
   const CREATE_FIELDS = [
-    { name: 'fullname',     type: 'text',    label: 'Full Name',   required: true },
-    { name: 'phoneNumber',  type: 'text',    label: 'Phone Number', required: true },
-    { name: 'address',      type: 'text',    label: 'Address' },
+    { name: 'fullname',     type: 'text',    label: 'Full Name',     required: true },
+    { name: 'phoneNumber',  type: 'text',    label: 'Phone Number',  required: true },
+    { name: 'address',      type: 'text',    label: 'Address',       required: true }, // now required to match backend
     { name: 'coordinateId', type: 'select',  label: 'Coordinate ID (optional)', options: COORD_OPTIONS },
   ];
   const EDIT_FIELDS = CREATE_FIELDS;
@@ -133,21 +136,37 @@ export default function CustomersPage() {
   };
 
   async function handleSubmit(form) {
-    if (!isSuper) {
-      setErr('Only superadmin can create or edit customers.');
+    // Admin OR Superadmin can create
+    const canCreate = isSuper || isAdmin;
+    if (editRow?.id) {
+      // Only Superadmin can edit
+      if (!isSuper) {
+        setErr('Admins cannot edit customers. Only superadmin can edit.');
+        return;
+      }
+      try {
+        setErr(''); setOk('');
+        const body = sanitize(EDIT_FIELDS, form);
+        await api.put(`/customers/${editRow.id}`, body);
+        setOk('Customer updated');
+        setOpen(false); setEditRow(null);
+        await fetchAll();
+      } catch (e) {
+        setErr(e?.response?.data?.message || e?.message || 'Action failed');
+      }
+      return;
+    }
+
+    // Create path
+    if (!canCreate) {
+      setErr('You do not have permission to create customers.');
       return;
     }
     try {
       setErr(''); setOk('');
-      if (editRow?.id) {
-        const body = sanitize(EDIT_FIELDS, form);
-        await api.put(`/customers/${editRow.id}`, body);
-        setOk('Customer updated');
-      } else {
-        const body = sanitize(CREATE_FIELDS, form);
-        await api.post('/customers', body);
-        setOk('Customer created');
-      }
+      const body = sanitize(CREATE_FIELDS, form);
+      await api.post('/customers', body);
+      setOk('Customer created');
       setOpen(false); setEditRow(null);
       await fetchAll();
     } catch (e) {
@@ -186,7 +205,11 @@ export default function CustomersPage() {
             </div>
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">Customers</h1>
-              <p className="text-sm text-slate-500">Manage your customer records and addresses.</p>
+              <p className="text-sm text-slate-500">
+                {isSuper
+                  ? 'Manage your customer records and addresses.'
+                  : (isAdmin ? 'Create customers for your operations. Editing/deleting is restricted.' : 'Browse customer records.')}
+              </p>
             </div>
           </div>
 
@@ -202,29 +225,20 @@ export default function CustomersPage() {
             </div>
 
             {/* Actions */}
-            {isSuper ? (
-              <>
-                <button
-                  onClick={()=>{ setEditRow(null); setOpen(true); }}
-                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
-                >
-                  <Plus size={16}/> New Customer
-                </button>
-                <button
-                  onClick={fetchAll}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm transition hover:bg-slate-50"
-                >
-                  <RefreshCw size={16}/> Refresh
-                </button>
-              </>
-            ) : (
+            {(isSuper || isAdmin) && (
               <button
-                onClick={fetchAll}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm transition hover:bg-slate-50"
+                onClick={()=>{ setEditRow(null); setOpen(true); }}
+                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
               >
-                <RefreshCw size={16}/> Refresh
+                <Plus size={16}/> New Customer
               </button>
             )}
+            <button
+              onClick={fetchAll}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              <RefreshCw size={16}/> Refresh
+            </button>
           </div>
         </div>
 
@@ -279,8 +293,7 @@ export default function CustomersPage() {
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-
-                {/* Actions: superadmin only */}
+                {/* Actions */}
                 {isSuper ? (
                   <div className="flex gap-2">
                     <button
@@ -296,6 +309,8 @@ export default function CustomersPage() {
                       <Trash2 size={16} /> Delete
                     </button>
                   </div>
+                ) : isAdmin ? (
+                  <div className="text-xs text-slate-400">Create-only (no edits)</div>
                 ) : (
                   <div className="text-xs text-slate-400">Read-only</div>
                 )}
@@ -305,14 +320,16 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* Create / Edit (superadmin only) */}
-      {isSuper && (
+      {/* Create / Edit modal
+          - Superadmin: create + edit
+          - Admin: create only (we still use same modal but guard edit path in handleSubmit) */}
+      {(isSuper || isAdmin) && (
         <FormModal
-          title={editRow ? 'Edit Customer' : 'Create Customer'}
+          title={editRow ? (isSuper ? 'Edit Customer' : 'Create Customer') : 'Create Customer'}
           open={open}
           onClose={()=>{ setOpen(false); setEditRow(null); }}
-          fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-          initial={editRow || {}}
+          fields={editRow && isSuper ? EDIT_FIELDS : CREATE_FIELDS}
+          initial={editRow && isSuper ? editRow : {}}
           onSubmit={handleSubmit}
         />
       )}

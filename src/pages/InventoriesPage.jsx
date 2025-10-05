@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Search, RefreshCw, Info, MapPin, Phone, Plus, Pencil, Trash2, X } from 'lucide-react';
 import { api } from '../utils/api';
 
-// ---------- Small helpers ----------
+/* ---------------- helpers ---------------- */
 const field = (name, label, type='text', required=false) => ({ name, label, type, required });
 const FIELDS = [
   field('inventoryName','Inventory Name','text',true),
@@ -22,7 +22,24 @@ const sanitize = (payload) => {
   return out;
 };
 
-// ---------- Inline Modal (Create/Edit) ----------
+// NEW: build unit totals as (sum IN − sum OUT)
+function buildStockByUnit(items = []) {
+  const map = new Map(); // key: unitId|unitName -> { unit: {id?, name}, quantity }
+  items.forEach((row) => {
+    const unitObj = row?.unit || row?.Unit || {};
+    const unitId = unitObj?.id ?? row?.unit_id ?? row?.unitId ?? unitObj?.name ?? '—';
+    const unitName = String(unitObj?.name ?? row?.unit ?? '—');
+    const key = String(unitId);
+    const qty = Number(row?.stockQuantity ?? row?.quantity ?? 0) || 0;
+    const sign = (row?.in_out || row?.inOut || '').toLowerCase() === 'out' ? -1 : 1;
+    const prev = map.get(key)?.quantity || 0;
+    map.set(key, { unit: { id: unitId, name: unitName }, quantity: prev + sign * qty });
+  });
+  // keep only positive/zero values (no negatives in badge)
+  return Array.from(map.values()).map(v => ({ ...v, quantity: Math.max(0, Number(v.quantity || 0)) }));
+}
+
+/* ---------------- Inline Modal (Create/Edit) ---------------- */
 function EditModal({ open, onClose, initial={}, onSubmit }) {
   const [form, setForm] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -71,14 +88,20 @@ function EditModal({ open, onClose, initial={}, onSubmit }) {
   );
 }
 
-// ---------- Inline Stats Popup ----------
+/* ---------------- Inline Stats Popup ---------------- */
 function StatsPopup({ inv, stats, items, loading, onClose }) {
   const totalProducts =
     (stats && stats.totalProducts != null ? stats.totalProducts :
      stats && stats.productCount   != null ? stats.productCount   :
      Array.isArray(items) ? items.length : 0);
 
-  const stockByUnit = (stats && Array.isArray(stats.stockByUnit)) ? stats.stockByUnit : [];
+  // Use backend-provided stockByUnit if it looks valid; otherwise compute from items
+  const computed = useMemo(() => buildStockByUnit(items), [items]);
+  const stockByUnit = useMemo(() => {
+    const arr = Array.isArray(stats?.stockByUnit) ? stats.stockByUnit : [];
+    const looksValid = arr.some(u => Number(u?.quantity || 0) > 0);
+    return looksValid ? arr : computed;
+  }, [stats?.stockByUnit, computed]);
 
   return (
     <div className="fixed inset-0 z-[55]">
@@ -98,7 +121,7 @@ function StatsPopup({ inv, stats, items, loading, onClose }) {
             <div className="sm:col-span-2 rounded-2xl border border-slate-200/80 bg-white/80 p-3">
               <div className="mb-1 text-xs font-medium text-slate-500">Stock by Unit</div>
               <div className="flex flex-wrap gap-2">
-                {stockByUnit.length === 0 ? (
+                {(!stockByUnit || stockByUnit.length === 0) ? (
                   <div className="text-xs text-slate-400">No unit stock yet.</div>
                 ) : stockByUnit.map((u, i) => {
                   const label = String(u?.unit?.name ?? u?.unit ?? '—').toUpperCase();
@@ -155,7 +178,7 @@ function StatsPopup({ inv, stats, items, loading, onClose }) {
   );
 }
 
-// ---------- Main Page ----------
+/* ---------------- Main Page ---------------- */
 export default function InventoriesPage() {
   // auth / role
   const [me, setMe] = useState(null);
@@ -191,7 +214,6 @@ export default function InventoriesPage() {
   async function fetchAll() {
     setLoading(true); setErr(''); setOk('');
     try {
-      // NOTE: Swagger uses /inventory/ (with trailing slash). Our api instance already prefixes /api.
       const r = await api.get('/inventory/');
       const data = r?.data?.data ?? r?.data ?? [];
       const sorted = Array.isArray(data)
@@ -261,7 +283,7 @@ export default function InventoriesPage() {
     }
   }
 
-  // --- Stats popup loaders (allowed for all roles) ---
+  // --- Stats popup loaders (now also compute stockByUnit) ---
   async function openStatsFor(row) {
     setOpenStats(row);
     try {
@@ -274,7 +296,16 @@ export default function InventoriesPage() {
       setItemsLoading(true);
       if (!itemsCache[row.id]) {
         const r2 = await api.get(`/stock/inventory/${row.id}`);
-        setItemsCache(prev=>({ ...prev, [row.id]: r2?.data?.data ?? r2?.data ?? [] }));
+        const items = r2?.data?.data ?? r2?.data ?? [];
+        setItemsCache(prev=>({ ...prev, [row.id]: items }));
+        // ⬇️ compute and inject stockByUnit if backend didn't provide it / it's zero
+        const stockByUnit = buildStockByUnit(items);
+        setStatsCache(prev => {
+          const current = prev[row.id] || {};
+          const provided = Array.isArray(current.stockByUnit) ? current.stockByUnit : [];
+          const hasPositive = provided.some(u => Number(u?.quantity || 0) > 0);
+          return { ...prev, [row.id]: { ...current, stockByUnit: hasPositive ? provided : stockByUnit } };
+        });
       }
     } finally {
       setItemsLoading(false);

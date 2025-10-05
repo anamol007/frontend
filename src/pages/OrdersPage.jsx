@@ -17,6 +17,22 @@ const STATUS_COLORS = {
 const PAYMENT = ["cash", "cheque", "card", "no"];
 const STATUSES = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
 
+/* ------------ date formatter: 1st Jan, 2025 ------------ */
+function ordinalSuffix(n) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function formatPrettyDate(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(+d)) return "—";
+  const day = ordinalSuffix(d.getDate());
+  const mon = d.toLocaleString(undefined, { month: "short" }); // Jan, Feb, …
+  const year = d.getFullYear();
+  return `${day} ${mon}, ${year}`;
+}
+
 function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200" }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium ${tone}`}>
@@ -28,18 +44,29 @@ function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200"
 export default function OrdersPage() {
   // auth / role
   const [me, setMe] = useState(null);
-  const isSuper = me?.role === "superadmin";
+  const role = me?.role || "";
+  const isSuper = role === "superadmin";
+  const canCreate = isSuper || role === "admin"; // admins can create
+  const canEditDelete = isSuper;                 // only superadmin can edit/delete
 
+  // admin’s accessible inventories (via /summary)
+  const [myInvIds, setMyInvIds] = useState([]);
+  const hasSingleInv = myInvIds.length === 1;
+  const mySingleInvId = hasSingleInv ? myInvIds[0] : null;
+
+  // data
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventories, setInventories] = useState([]);
   const [units, setUnits] = useState([]);
 
+  // ui
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
+  // filters / modal
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [invFilter, setInvFilter] = useState("");
@@ -56,10 +83,23 @@ export default function OrdersPage() {
       setMe(null);
     }
   }
-
   useEffect(() => { fetchMe(); }, []);
 
-  // --------- load reference data
+  // resolve accessible inventories for admin via /summary?period=all
+  async function resolveMyInventories() {
+    try {
+      const res = await api.get("/summary", { params: { period: "all" } });
+      const invs = res?.data?.data?.inventories || [];
+      const ids = invs.map(i => Number(i.inventoryId ?? i.id)).filter(Boolean);
+      setMyInvIds(ids);
+      if (!isSuper && ids.length === 1) setInvFilter(String(ids[0]));
+    } catch {
+      setMyInvIds([]);
+    }
+  }
+  useEffect(() => { resolveMyInventories(); }, [isSuper]);
+
+  // reference data
   useEffect(() => {
     (async () => {
       try {
@@ -69,21 +109,27 @@ export default function OrdersPage() {
           api.get("/inventory/"),
           api.get("/units/"),
         ]);
-        setCustomers((c.data?.data ?? c.data ?? [])
-          .sort((a, b) => (a.fullname || "").localeCompare(b.fullname || "")));
-        setProducts((p.data?.data ?? p.data ?? [])
-          .sort((a, b) => (a.productName || "").localeCompare(b.productName || "")));
-        setInventories((i.data?.data ?? i.data ?? [])
-          .sort((a, b) => (a.inventoryName || "").localeCompare(b.inventoryName || "")));
-        setUnits((u.data?.data ?? u.data ?? [])
-          .sort((a, b) => (a.name || "").localeCompare(b.name || "")));
+
+        const cust = (c.data?.data ?? c.data ?? []).slice()
+          .sort((a, b) => (a.fullname || "").localeCompare(b.fullname || ""));
+        const prod = (p.data?.data ?? p.data ?? []).slice()
+          .sort((a, b) => (a.productName || "").localeCompare(b.productName || ""));
+        const invAll = (i.data?.data ?? i.data ?? []).slice()
+          .sort((a, b) => (a.inventoryName || "").localeCompare(b.inventoryName || ""));
+        const unit = (u.data?.data ?? u.data ?? []).slice()
+          .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+        setCustomers(cust);
+        setProducts(prod);
+        setInventories(isSuper ? invAll : invAll.filter(iv => myInvIds.includes(iv.id)));
+        setUnits(unit);
       } catch {
-        // non-fatal for page render
+        // non-fatal
       }
     })();
-  }, []);
+  }, [isSuper, myInvIds.join(",")]);
 
-  // --------- load orders
+  // orders (backend already role-scopes)
   async function fetchOrders() {
     setLoading(true);
     setErr("");
@@ -100,9 +146,12 @@ export default function OrdersPage() {
   }
   useEffect(() => { fetchOrders(); }, []);
 
-  // --------- filtering & search
+  // filtering
   const filtered = useMemo(() => {
     let data = [...orders];
+    if (!isSuper && myInvIds.length > 0) {
+      data = data.filter(o => myInvIds.includes(Number(o.inventoryId)));
+    }
     if (statusFilter) data = data.filter(o => (o.status || "") === statusFilter);
     if (invFilter) data = data.filter(o => String(o.inventoryId) === String(invFilter));
     const s = q.trim().toLowerCase();
@@ -113,19 +162,25 @@ export default function OrdersPage() {
       (o?.inventory?.inventoryName || "").toLowerCase().includes(s) ||
       String(o?.id || "").includes(s)
     );
-  }, [orders, q, statusFilter, invFilter]);
+  }, [orders, q, statusFilter, invFilter, myInvIds, isSuper]);
 
-  // --------- form fields (exactly backend vars)
+  // form fields (match backend)
+  const invOptions = useMemo(() => {
+    const base = inventories.map(i => ({ value: i.id, label: i.inventoryName }));
+    if (!isSuper && hasSingleInv) return base.filter(o => Number(o.value) === mySingleInvId);
+    return base;
+  }, [inventories, isSuper, hasSingleInv, mySingleInvId]);
+
   const CREATE_FIELDS = useMemo(() => ([
     { name: "customerId",  type: "select", label: "Customer",   required: true, options: customers.map(c => ({ value: c.id, label: c.fullname })) },
     { name: "productId",   type: "select", label: "Product",    required: true, options: products.map(p => ({ value: p.id, label: p.productName })) },
-    { name: "inventoryId", type: "select", label: "Inventory",  required: true, options: inventories.map(i => ({ value: i.id, label: i.inventoryName })) },
+    { name: "inventoryId", type: "select", label: "Inventory",  required: true, options: invOptions },
     { name: "unit_id",     type: "select", label: "Unit",       required: true, options: units.map(u => ({ value: u.id, label: u.name })) },
     { name: "quantity",    type: "number", label: "Quantity",   required: true, step: "0.01", min: "0" },
     { name: "status",      type: "select", label: "Status",     required: false, options: STATUSES },
     { name: "paymentMethod", type: "select", label: "Payment",  required: false, options: PAYMENT },
     { name: "orderDate",   type: "datetime-local", label: "Order Date", required: false },
-  ]), [customers, products, inventories, units]);
+  ]), [customers, products, units, invOptions]);
 
   const EDIT_FIELDS = CREATE_FIELDS;
 
@@ -140,17 +195,32 @@ export default function OrdersPage() {
     return out;
   }
 
-  // --------- CRUD (superadmin only)
+  // CRUD
   async function handleSubmit(form) {
-    if (!isSuper) { setErr("Only Super Admin can perform this action"); return; }
+    const role = me?.role || "";
+    const isSuper = role === "superadmin";
+    const canCreate = isSuper || role === "admin";
+
+    if (!canCreate) { setErr("Only Admin / Super Admin can create orders"); return; }
+    // prevent admin from editing
+    if (!isSuper && editRow?.id) {
+      setErr("Admins can’t edit orders — only create.");
+      return;
+    }
+
+    const formCopy = { ...form };
+    if (!isSuper && hasSingleInv) {
+      formCopy.inventoryId = mySingleInvId;
+    }
+
     try {
       setErr(""); setOk("");
-      if (editRow?.id) {
-        const body = sanitize(EDIT_FIELDS, form);
+      if (editRow?.id && isSuper) {
+        const body = sanitize(EDIT_FIELDS, formCopy);
         await api.put(`/orders/${editRow.id}`, body);
         setOk("Order updated");
       } else {
-        const body = sanitize(CREATE_FIELDS, form);
+        const body = sanitize(CREATE_FIELDS, formCopy);
         await api.post("/orders/", body);
         setOk("Order created");
       }
@@ -162,7 +232,7 @@ export default function OrdersPage() {
   }
 
   async function handleDelete(row) {
-    if (!isSuper) { setErr("Only Super Admin can delete orders"); return; }
+    if (!canEditDelete) { setErr("Only Super Admin can delete orders"); return; }
     if (!window.confirm(`Delete order #${row.id}?`)) return;
     try {
       setErr(""); setOk("");
@@ -184,7 +254,7 @@ export default function OrdersPage() {
             <p className="text-sm text-slate-500">
               {isSuper
                 ? "Create, edit, or manage orders. Totals are auto-calculated by the server."
-                : "Browse and filter orders (read-only)."}
+                : (canCreate ? "Create new orders for your inventory. (Editing/deleting is restricted.)" : "Browse and filter orders (read-only).")}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -210,8 +280,10 @@ export default function OrdersPage() {
               onChange={e => setInvFilter(e.target.value)}
               className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
             >
-              <option value="">All inventories</option>
-              {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName}</option>)}
+              <option value="">{isSuper ? "All inventories" : "My inventories"}</option>
+              {(isSuper ? inventories : inventories.filter(iv => myInvIds.includes(iv.id))).map(i => (
+                <option key={i.id} value={i.id}>{i.inventoryName}</option>
+              ))}
             </select>
             <button
               onClick={fetchOrders}
@@ -219,9 +291,12 @@ export default function OrdersPage() {
             >
               <RefreshCw size={16} /> Refresh
             </button>
-            {isSuper && (
+            {(isSuper || role === "admin") && (
               <button
-                onClick={() => { setEditRow(null); setOpen(true); }}
+                onClick={() => {
+                  setEditRow(null);
+                  setOpen(true);
+                }}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
               >
                 <Plus size={16} /> New Order
@@ -258,7 +333,6 @@ export default function OrdersPage() {
                 key={o.id}
                 className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
               >
-                {/* sheen */}
                 <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -283,13 +357,15 @@ export default function OrdersPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <CalendarClock size={14} className="text-slate-400"/>
-                        <span>{new Date(o.orderDate || o.createdAt).toLocaleString()}</span>
+                        {/* 👇 Use pretty date format */}
+                        <span>{formatPrettyDate(o.orderDate || o.createdAt)}</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {isSuper && (
+                {/* Buttons: only superadmin can edit/delete */}
+                {canEditDelete && (
                   <div className="mt-4 flex justify-end gap-2">
                     <button
                       onClick={() => {
@@ -324,13 +400,17 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {/* Modal (superadmin only; guarded in onSubmit too) */}
+      {/* Modal */}
       <FormModal
-        title={editRow ? "Edit Order" : "Create Order"}
+        title={editRow ? (isSuper ? "Edit Order" : "Create Order") : "Create Order"}
         open={open}
         onClose={() => { setOpen(false); setEditRow(null); }}
-        fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-        initial={editRow || {}}
+        fields={editRow && isSuper ? EDIT_FIELDS : CREATE_FIELDS}
+        initial={
+          editRow && isSuper
+            ? editRow
+            : (!isSuper && hasSingleInv ? { inventoryId: mySingleInvId } : {})
+        }
         onSubmit={handleSubmit}
       />
     </div>
