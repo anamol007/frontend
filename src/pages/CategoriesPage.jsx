@@ -15,30 +15,22 @@ import {
 } from "lucide-react";
 import { api } from "../utils/api";
 
-/** Utils **********************************************************/
+/* ---------- helpers ---------- */
 const slugify = (s) =>
   s?.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "";
 
-// Adjust this to your real enum if you have one in the DB
 const CATEGORY_OPTIONS = ["GRAIN", "VEGETABLE", "FRUIT", "DAIRY", "MEAT", "OTHER"];
 
 function normalizeCategoriesResponse(res) {
-  // Accepts many shapes and returns an array of categories
-  // Common cases:
-  // - { success, message, data: [...] }
-  // - { data: [...] } (axios)
-  // - [...] (already array)
   const root = res?.data ?? res;
   if (Array.isArray(root)) return root;
   if (Array.isArray(root?.data)) return root.data;
   if (Array.isArray(root?.items)) return root.items;
-  if (Array.isArray(res?.items)) return res.items;
-  // { success, data: <object> } for single fetch by id
   if (root?.data && !Array.isArray(root.data)) return [root.data];
   return [];
 }
 
-/** SimpleModal (self-contained) ***********************************/
+/* ---------- Simple modal ---------- */
 function SimpleModal({ title, open, onClose, onSubmit, children, submitLabel = "Save" }) {
   if (!open) return null;
   return (
@@ -70,7 +62,7 @@ function SimpleModal({ title, open, onClose, onSubmit, children, submitLabel = "
   );
 }
 
-/** StatBadge *******************************************************/
+/* ---------- Stat badge ---------- */
 function StatBadge({ icon: Icon, label, value, tone = "indigo" }) {
   const tones = {
     indigo: {
@@ -105,46 +97,59 @@ function StatBadge({ icon: Icon, label, value, tone = "indigo" }) {
   );
 }
 
-/** Page ************************************************************/
+/* ---------- Page ---------- */
 export default function CategoriesPage() {
-  // Query/sort
+  // auth / role
+  const [me, setMe] = useState(null);
+  const isSuper = me?.role === "superadmin";
+  const isAdmin = me?.role === "admin";
+
+  // query / sort
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState("name"); // name | items | updated
-  const [sortDir, setSortDir] = useState("asc"); // asc | desc
+  const [sortDir, setSortDir] = useState("asc");  // asc | desc
 
-  // Modals + forms
+  // modals + forms
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [addForm, setAddForm] = useState({ name: "", slug: "", categoryCol: "GRAIN" });
   const [editForm, setEditForm] = useState({ name: "", slug: "", categoryCol: "GRAIN" });
 
-  // Data & status
+  // data & status
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Stats
+  // stats
   const [stats, setStats] = useState([
     { icon: Tags, label: "Categories", value: "—", tone: "indigo" },
     { icon: Layers, label: "Items", value: "—", tone: "emerald" },
     { icon: RefreshCw, label: "Synced", value: "100%", tone: "indigo" },
   ]);
 
-  // Helper: refetch categories from backend
+  // pagination
+  const PER_PAGE = 5;
+  const [page, setPage] = useState(1);
+
+  // fetch me
+  async function fetchMe() {
+    try {
+      const r = await api.get("/users/verify-token");
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      setMe(null);
+    }
+  }
+
+  // refetch categories
   const refetchCategories = async () => {
     setLoading(true);
     try {
-      // If your API is mounted under /api, change to "/api/categories"
-      const res = await (api?.get
-        ? api.get("/categories")
-        : api?.categories?.list
-        ? api.categories.list()
-        : { data: [] });
-
-      const raw = normalizeCategoriesResponse(res);
-      const arr = Array.isArray(raw) ? raw : [];
-      setCategories(arr);
+      const res = await api.get("/categories");
+      const arr = normalizeCategoriesResponse(res);
+      setCategories(Array.isArray(arr) ? arr : []);
 
       const total = arr.length;
       const totalItems = arr.reduce(
@@ -158,20 +163,16 @@ export default function CategoriesPage() {
       ]);
       setError(null);
     } catch (e) {
-      console.error("[CategoriesPage] refetch error:", e);
       setError(e?.response?.data?.message || "Failed to load categories.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Initial load
-  useEffect(() => {
-    refetchCategories();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // bootstrap
+  useEffect(() => { fetchMe(); refetchCategories(); }, []);
 
-  // Client-side filter/sort
+  // filter/sort
   const filtered = useMemo(() => {
     const arr = Array.isArray(categories) ? categories : [];
     const q = query.trim().toLowerCase();
@@ -196,7 +197,20 @@ export default function CategoriesPage() {
     return copy;
   }, [categories, query, sortKey, sortDir]);
 
-  // Actions
+  // compute pagination
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  useEffect(() => {
+    if (page !== currentPage) setPage(currentPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPages]);
+
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * PER_PAGE;
+    return filtered.slice(start, start + PER_PAGE);
+  }, [filtered, currentPage]);
+
+  // actions
   const onEdit = (row) => {
     setEditing(row || {});
     setEditForm({
@@ -208,6 +222,7 @@ export default function CategoriesPage() {
   };
 
   const onDelete = async (row) => {
+    if (!isSuper) return; // admins cannot delete
     const hasProducts = Array.isArray(row?.products) && row.products.length > 0;
     if (hasProducts) {
       alert(
@@ -219,22 +234,14 @@ export default function CategoriesPage() {
     }
     if (!window.confirm(`Delete category "${row?.name}"?`)) return;
     try {
-      // If your API is under /api, change to `/api/categories/${row.id}`
-      const resp = await (api?.delete
-        ? api.delete(`/categories/${row.id}`)
-        : api?.categories?.remove
-        ? api.categories.remove(row.id)
-        : Promise.reject(new Error("No delete method configured")));
-      const ok = resp?.data?.success === true || resp?.success === true || resp?.status === 200;
-      if (!ok && resp?.data?.message) throw new Error(resp.data.message);
+      await api.delete(`/categories/${row.id}`);
       await refetchCategories();
     } catch (e) {
-      console.error("[CategoriesPage] delete error:", e);
       alert(e?.response?.data?.message || e?.message || "Failed to delete category");
     }
   };
 
-  /** Render ********************************************************/
+  /* ---------- render ---------- */
   return (
     <div className="px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
@@ -312,13 +319,14 @@ export default function CategoriesPage() {
         <ul className="divide-y divide-gray-100">
           {loading && <li className="p-4 text-sm text-gray-500">Loading…</li>}
           {error && <li className="p-4 text-sm text-red-600">{error}</li>}
-          {!loading && !error && filtered.length === 0 && (
+          {!loading && !error && paged.length === 0 && (
             <li className="p-6 text-sm text-gray-500">No categories found.</li>
           )}
 
-          {filtered.map((row) => {
+          {paged.map((row) => {
             const itemCount = Array.isArray(row.products) ? row.products.length : Number(row.count) || 0;
             const cannotDelete = itemCount > 0;
+            const showDelete = isSuper; // admins cannot delete
             return (
               <li key={row.id} className="md:grid md:grid-cols-[minmax(220px,1.2fr)_120px_180px_200px] md:items-center">
                 {/* Name */}
@@ -348,19 +356,21 @@ export default function CategoriesPage() {
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
-                    <button
-                      onClick={() => onDelete(row)}
-                      disabled={cannotDelete}
-                      title={cannotDelete ? "Cannot delete: category has products" : "Delete"}
-                      className={[
-                        "rounded-lg border p-2",
-                        cannotDelete
-                          ? "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
-                          : "border-gray-200 bg-white hover:bg-gray-50",
-                      ].join(" ")}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {showDelete && (
+                      <button
+                        onClick={() => onDelete(row)}
+                        disabled={cannotDelete}
+                        title={cannotDelete ? "Cannot delete: category has products" : "Delete"}
+                        className={[
+                          "rounded-lg border p-2",
+                          cannotDelete
+                            ? "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
+                            : "border-gray-200 bg-white hover:bg-gray-50",
+                        ].join(" ")}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -384,24 +394,72 @@ export default function CategoriesPage() {
                   >
                     <Pencil className="h-4 w-4" /> Edit
                   </button>
-                  <button
-                    onClick={() => onDelete(row)}
-                    disabled={cannotDelete}
-                    title={cannotDelete ? "Cannot delete: category has products" : "Delete"}
-                    className={[
-                      "inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-medium",
-                      cannotDelete
-                        ? "border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : "border border-red-200 bg-white text-red-600 hover:bg-red-50",
-                    ].join(" ")}
-                  >
-                    <Trash2 className="h-4 w-4" /> Delete
-                  </button>
+                  {showDelete && (
+                    <button
+                      onClick={() => onDelete(row)}
+                      disabled={cannotDelete}
+                      title={cannotDelete ? "Cannot delete: category has products" : "Delete"}
+                      className={[
+                        "inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-medium",
+                        cannotDelete
+                          ? "border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : "border border-red-200 bg-white text-red-600 hover:bg-red-50",
+                      ].join(" ")}
+                    >
+                      <Trash2 className="h-4 w-4" /> Delete
+                    </button>
+                  )}
                 </div>
               </li>
             );
           })}
         </ul>
+      </div>
+
+      {/* Pagination — compact to match other pages */}
+      <div className="mt-4 flex items-center justify-center gap-2">
+        {/* Prev */}
+        <button
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={currentPage === 1}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+          title="Previous"
+        >
+          <span className="opacity-60">‹</span> Prev
+        </button>
+
+        {/* number chips: current, plus neighbor */}
+        {(() => {
+          const nums = [];
+          const start = Math.max(1, currentPage - 1);
+          const end = Math.min(totalPages, currentPage + 1);
+          for (let i = start; i <= end; i++) nums.push(i);
+          if (currentPage === 1 && totalPages >= 2 && !nums.includes(2)) nums.push(2);
+
+          return nums.map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={
+                n === currentPage
+                  ? "rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                  : "rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm hover:bg-gray-50"
+              }
+            >
+              {n}
+            </button>
+          ));
+        })()}
+
+        {/* Next */}
+        <button
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          disabled={currentPage === totalPages}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+          title="Next"
+        >
+          Next <span className="opacity-60">›</span>
+        </button>
       </div>
 
       {/* Add Modal */}
@@ -416,27 +474,11 @@ export default function CategoriesPage() {
             return;
           }
           try {
-            // If your API is under /api, change to "/api/categories"
-            console.log("[CategoriesPage] create payload:", payload);
-            const created = api?.post
-              ? await api.post("/categories", payload)
-              : api?.categories?.create
-              ? await api.categories.create(payload)
-              : { data: { id: Math.random().toString(36).slice(2), ...payload, products: [], updatedAt: new Date().toISOString() } };
-
-            console.log("[CategoriesPage] create response:", created);
-            const ok = created?.data?.success === true || created?.success === true || created?.status === 201;
-            const newRow = created?.data?.data ?? created?.data ?? created;
-            if (!ok && !newRow?.id) {
-              const msg = created?.data?.message || created?.message || "Server rejected create";
-              throw new Error(msg);
-            }
-
+            await api.post("/categories", payload);
             await refetchCategories();
             setAddForm({ name: "", slug: "", categoryCol: "GRAIN" });
             setIsAddOpen(false);
           } catch (e) {
-            console.error("[CategoriesPage] create error:", e);
             alert(e?.response?.data?.message || e?.message || "Failed to create category");
           }
         }}
@@ -501,26 +543,10 @@ export default function CategoriesPage() {
             return;
           }
           try {
-            // If your API is under /api, change to `/api/categories/${editing.id}`
-            console.log("[CategoriesPage] update payload:", payload, "id:", editing?.id);
-            const updated = api?.put
-              ? await api.put(`/categories/${editing.id}`, payload)
-              : api?.categories?.update
-              ? await api.categories.update(editing.id, payload)
-              : { data: { ...editing, ...payload, updatedAt: new Date().toISOString() } };
-
-            console.log("[CategoriesPage] update response:", updated);
-            const ok = updated?.data?.success === true || updated?.success === true || updated?.status === 200;
-            const row = updated?.data?.data ?? updated?.data ?? updated;
-            if (!ok && !row?.id) {
-              const msg = updated?.data?.message || updated?.message || "Server rejected update";
-              throw new Error(msg);
-            }
-
+            await api.put(`/categories/${editing.id}`, payload);
             await refetchCategories();
             setIsEditOpen(false);
           } catch (e) {
-            console.error("[CategoriesPage] update error:", e);
             alert(e?.response?.data?.message || e?.message || "Failed to update category");
           }
         }}

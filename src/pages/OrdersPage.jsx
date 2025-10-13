@@ -3,10 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../utils/api";
 import {
   Search, Plus, RefreshCw, Package, User2, Building2,
-  Banknote, CalendarClock, Pencil, Trash2, BadgeCheck
+  Banknote, CalendarClock, Pencil, Trash2, BadgeCheck,
+  ChevronLeft, ChevronRight, X
 } from "lucide-react";
 import FormModal from "../components/FormModal";
 
+/* -------------------- constants -------------------- */
 const STATUS_COLORS = {
   pending: "bg-amber-100 text-amber-700 border-amber-200",
   confirmed: "bg-blue-100 text-blue-700 border-blue-200",
@@ -17,7 +19,7 @@ const STATUS_COLORS = {
 const PAYMENT = ["cash", "cheque", "card", "no"];
 const STATUSES = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
 
-/* ------------ date formatter: 1st Jan, 2025 ------------ */
+/* -------------------- utils -------------------- */
 function ordinalSuffix(n) {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
@@ -28,11 +30,10 @@ function formatPrettyDate(value) {
   const d = new Date(value);
   if (Number.isNaN(+d)) return "—";
   const day = ordinalSuffix(d.getDate());
-  const mon = d.toLocaleString(undefined, { month: "short" }); // Jan, Feb, …
+  const mon = d.toLocaleString(undefined, { month: "short" });
   const year = d.getFullYear();
   return `${day} ${mon}, ${year}`;
 }
-
 function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200" }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium ${tone}`}>
@@ -41,6 +42,90 @@ function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200"
   );
 }
 
+/* -------------------- shared UI: Confirm & Pagination -------------------- */
+function ConfirmDialog({ open, title = "Are you sure?", message, confirmLabel = "Confirm", tone = "rose", onConfirm, onClose }) {
+  if (!open) return null;
+  const toneBtn = tone === "rose" ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-600 hover:bg-indigo-700";
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center">
+      <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-[min(560px,92vw)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="px-5 py-4 text-sm text-slate-700">{message}</div>
+        <div className="flex justify-end gap-2 border-t px-5 py-3">
+          <button onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+            Cancel
+          </button>
+          <button
+            onClick={() => { onConfirm?.(); onClose?.(); }}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold text-white ${toneBtn}`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Pagination({ total, page, perPage, onPage }) {
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const goto = (p) => onPage(Math.min(pages, Math.max(1, p)));
+
+  const windowSize = 3;
+  let lo = Math.max(1, page - 1);
+  let hi = Math.min(pages, lo + windowSize - 1);
+  lo = Math.max(1, hi - windowSize + 1);
+
+  const nums = [];
+  for (let p = lo; p <= hi; p++) nums.push(p);
+
+  const btnBase = "inline-flex items-center gap-1 rounded-2xl border px-4 py-2 text-sm transition";
+  const pill = "rounded-2xl px-3 py-2 text-sm font-semibold";
+
+  return (
+    <div className="mt-6 flex justify-center">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => goto(page - 1)}
+          disabled={page === 1}
+          className={`${btnBase} border-slate-200 bg-white text-slate-600 disabled:opacity-40`}
+        >
+          <ChevronLeft size={16} /> Prev
+        </button>
+
+        {nums.map((n) =>
+          n === page ? (
+            <span key={n} className={`${pill} bg-slate-900 text-white shadow`}>{n}</span>
+          ) : (
+            <button
+              key={n}
+              onClick={() => goto(n)}
+              className={`${btnBase} border-slate-200 bg-white text-slate-900 hover:bg-slate-50`}
+            >
+              {n}
+            </button>
+          )
+        )}
+
+        <button
+          onClick={() => goto(page + 1)}
+          disabled={page === pages}
+          className={`${btnBase} border-slate-200 bg-white text-slate-600 disabled:opacity-40`}
+        >
+          Next <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------- page -------------------- */
 export default function OrdersPage() {
   // auth / role
   const [me, setMe] = useState(null);
@@ -49,7 +134,7 @@ export default function OrdersPage() {
   const canCreate = isSuper || role === "admin"; // admins can create
   const canEditDelete = isSuper;                 // only superadmin can edit/delete
 
-  // admin’s accessible inventories (via /summary)
+  // admin inventories (from /summary)
   const [myInvIds, setMyInvIds] = useState([]);
   const hasSingleInv = myInvIds.length === 1;
   const mySingleInvId = hasSingleInv ? myInvIds[0] : null;
@@ -73,6 +158,14 @@ export default function OrdersPage() {
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
+  // pagination
+  const [page, setPage] = useState(1);
+  const perPage = 6;
+
+  // confirm dialog
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [targetRow, setTargetRow] = useState(null);
+
   // who am I?
   async function fetchMe() {
     try {
@@ -85,7 +178,7 @@ export default function OrdersPage() {
   }
   useEffect(() => { fetchMe(); }, []);
 
-  // resolve accessible inventories for admin via /summary?period=all
+  // resolve inventories for admin
   async function resolveMyInventories() {
     try {
       const res = await api.get("/summary", { params: { period: "all" } });
@@ -129,7 +222,7 @@ export default function OrdersPage() {
     })();
   }, [isSuper, myInvIds.join(",")]);
 
-  // orders (backend already role-scopes)
+  // orders
   async function fetchOrders() {
     setLoading(true);
     setErr("");
@@ -146,7 +239,9 @@ export default function OrdersPage() {
   }
   useEffect(() => { fetchOrders(); }, []);
 
-  // filtering
+  // filtering (also reset to page 1 when filters/search change)
+  useEffect(() => { setPage(1); }, [q, statusFilter, invFilter]);
+
   const filtered = useMemo(() => {
     let data = [...orders];
     if (!isSuper && myInvIds.length > 0) {
@@ -163,6 +258,10 @@ export default function OrdersPage() {
       String(o?.id || "").includes(s)
     );
   }, [orders, q, statusFilter, invFilter, myInvIds, isSuper]);
+
+  // page slice
+  const start = (page - 1) * perPage;
+  const pageItems = filtered.slice(start, start + perPage);
 
   // form fields (match backend)
   const invOptions = useMemo(() => {
@@ -202,16 +301,10 @@ export default function OrdersPage() {
     const canCreate = isSuper || role === "admin";
 
     if (!canCreate) { setErr("Only Admin / Super Admin can create orders"); return; }
-    // prevent admin from editing
-    if (!isSuper && editRow?.id) {
-      setErr("Admins can’t edit orders — only create.");
-      return;
-    }
+    if (!isSuper && editRow?.id) { setErr("Admins can’t edit orders — only create."); return; }
 
     const formCopy = { ...form };
-    if (!isSuper && hasSingleInv) {
-      formCopy.inventoryId = mySingleInvId;
-    }
+    if (!isSuper && hasSingleInv) formCopy.inventoryId = mySingleInvId;
 
     try {
       setErr(""); setOk("");
@@ -231,9 +324,9 @@ export default function OrdersPage() {
     }
   }
 
-  async function handleDelete(row) {
+  // delete (uses custom confirm)
+  async function deleteNow(row) {
     if (!canEditDelete) { setErr("Only Super Admin can delete orders"); return; }
-    if (!window.confirm(`Delete order #${row.id}?`)) return;
     try {
       setErr(""); setOk("");
       await api.delete(`/orders/${row.id}`);
@@ -293,10 +386,7 @@ export default function OrdersPage() {
             </button>
             {(isSuper || role === "admin") && (
               <button
-                onClick={() => {
-                  setEditRow(null);
-                  setOpen(true);
-                }}
+                onClick={() => { setEditRow(null); setOpen(true); }}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
               >
                 <Plus size={16} /> New Order
@@ -320,87 +410,95 @@ export default function OrdersPage() {
           No orders found.
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map(o => {
-            const cust = o.customer?.fullname || "—";
-            const prod = o.product?.productName || "—";
-            const inv  = o.inventory?.inventoryName || "—";
-            const unitName = o.unit?.name || "—";
-            const statusTone = STATUS_COLORS[o.status] || STATUS_COLORS.pending;
+        <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {pageItems.map(o => {
+              const cust = o.customer?.fullname || "—";
+              const prod = o.product?.productName || "—";
+              const inv  = o.inventory?.inventoryName || "—";
+              const unitName = o.unit?.name || "—";
+              const statusTone = STATUS_COLORS[o.status] || STATUS_COLORS.pending;
 
-            return (
-              <div
-                key={o.id}
-                className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
-              >
-                <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="bg-slate-100 text-slate-700 border-slate-200">#{o.id}</Badge>
-                      <Badge tone={statusTone}><BadgeCheck size={12} /> {o.status || "pending"}</Badge>
-                      <Badge tone="bg-violet-100 text-violet-700 border-violet-200">
-                        <Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}
-                      </Badge>
-                    </div>
+              return (
+                <div
+                  key={o.id}
+                  className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
+                >
+                  <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone="bg-slate-100 text-slate-700 border-slate-200">#{o.id}</Badge>
+                        <Badge tone={statusTone}><BadgeCheck size={12} /> {o.status || "pending"}</Badge>
+                        <Badge tone="bg-violet-100 text-violet-700 border-violet-200">
+                          <Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}
+                        </Badge>
+                      </div>
 
-                    <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{prod}</h3>
-                    <div className="mt-1 grid gap-1 text-sm text-slate-600">
-                      <div className="flex items-center gap-2">
-                        <User2 size={14} className="text-slate-400"/><span className="truncate">{cust}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Building2 size={14} className="text-slate-400"/><span className="truncate">{inv}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Package size={14} className="text-slate-400"/><span>{o.quantity} {unitName}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <CalendarClock size={14} className="text-slate-400"/>
-                        {/* 👇 Use pretty date format */}
-                        <span>{formatPrettyDate(o.orderDate || o.createdAt)}</span>
+                      <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{prod}</h3>
+                      <div className="mt-1 grid gap-1 text-sm text-slate-600">
+                        <div className="flex items-center gap-2">
+                          <User2 size={14} className="text-slate-400"/><span className="truncate">{cust}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Building2 size={14} className="text-slate-400"/><span className="truncate">{inv}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Package size={14} className="text-slate-400"/><span>{o.quantity} {unitName}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CalendarClock size={14} className="text-slate-400"/>
+                          <span>{formatPrettyDate(o.orderDate || o.createdAt)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  {canEditDelete && (
+                    <div className="mt-4 flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setEditRow({
+                            id: o.id,
+                            customerId: o.customerId,
+                            productId: o.productId,
+                            inventoryId: o.inventoryId,
+                            quantity: o.quantity,
+                            unit_id: o.unit_id,
+                            status: o.status,
+                            paymentMethod: o.paymentMethod,
+                            orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
+                          });
+                          setOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                      >
+                        <Pencil size={16}/> Edit
+                      </button>
+                      <button
+                        onClick={() => { setTargetRow(o); setConfirmOpen(true); }}
+                        className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                      >
+                        <Trash2 size={16}/> Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
+              );
+            })}
+          </div>
 
-                {/* Buttons: only superadmin can edit/delete */}
-                {canEditDelete && (
-                  <div className="mt-4 flex justify-end gap-2">
-                    <button
-                      onClick={() => {
-                        setEditRow({
-                          id: o.id,
-                          customerId: o.customerId,
-                          productId: o.productId,
-                          inventoryId: o.inventoryId,
-                          quantity: o.quantity,
-                          unit_id: o.unit_id,
-                          status: o.status,
-                          paymentMethod: o.paymentMethod,
-                          orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
-                        });
-                        setOpen(true);
-                      }}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                    >
-                      <Pencil size={16}/> Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(o)}
-                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                    >
-                      <Trash2 size={16}/> Delete
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+          {/* Pagination */}
+          <Pagination
+            total={filtered.length}
+            page={page}
+            perPage={perPage}
+            onPage={setPage}
+          />
+        </>
       )}
 
-      {/* Modal */}
+      {/* Form Modal */}
       <FormModal
         title={editRow ? (isSuper ? "Edit Order" : "Create Order") : "Create Order"}
         open={open}
@@ -412,6 +510,17 @@ export default function OrdersPage() {
             : (!isSuper && hasSingleInv ? { inventoryId: mySingleInvId } : {})
         }
         onSubmit={handleSubmit}
+      />
+
+      {/* Confirm Delete */}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Delete Order"
+        message={targetRow ? `Are you sure you want to delete order #${targetRow.id}? This cannot be undone.` : ""}
+        confirmLabel="Delete"
+        tone="rose"
+        onConfirm={() => targetRow && deleteNow(targetRow)}
+        onClose={() => { setConfirmOpen(false); setTargetRow(null); }}
       />
     </div>
   );

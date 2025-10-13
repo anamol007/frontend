@@ -1,12 +1,18 @@
 // src/pages/ProductsPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2, RefreshCw, Search, Tag, Package2, Layers, DollarSign, X, Save } from 'lucide-react';
+import {
+  Plus, Pencil, Trash2, RefreshCw, Search, Tag, Package2, Layers, DollarSign,
+  X, Save, ChevronLeft, ChevronRight, CheckCircle2, XCircle
+} from 'lucide-react';
 import { api } from '../utils/api';
 
-// small helpers
+// ---------- small helpers ----------
 const cls = (...a) => a.filter(Boolean).join(' ');
-const byAlpha = (get = (x) => x) => (a, b) => `${get(a)}`.localeCompare(`${get(b)}`, undefined, { sensitivity: 'base' });
+const byAlpha = (get = (x) => x) =>
+  (a, b) => `${get(a)}`.localeCompare(`${get(b)}`, undefined, { sensitivity: 'base' });
+const PAGE_SIZE = 5;
 
+// ---------- shared UI ----------
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
   return (
@@ -42,6 +48,127 @@ function RateChip({ name, rate }) {
   );
 }
 
+// ---------- Reusable Confirm Modal ----------
+function ConfirmModal({
+  open,
+  mode = 'confirm', // 'confirm' | 'success' | 'error'
+  titleConfirm = 'Are you sure?',
+  titleSuccess = 'Done',
+  titleError = 'Something went wrong',
+  message = '',
+  onCancel,
+  onConfirm,
+  confirmLabel = 'Confirm',
+}) {
+  if (!open) return null;
+
+  const isConfirm = mode === 'confirm';
+  const isSuccess = mode === 'success';
+  const isError   = mode === 'error';
+
+  return (
+    <div className="fixed inset-0 z-[70]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute left-1/2 top-1/2 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/95 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+        <div
+          className={cls(
+            'flex items-center justify-between px-5 py-4 text-white',
+            isConfirm && 'bg-slate-900',
+            isSuccess && 'bg-emerald-600',
+            isError && 'bg-rose-600'
+          )}
+        >
+          <div className="font-semibold">
+            {isConfirm ? titleConfirm : isSuccess ? titleSuccess : titleError}
+          </div>
+          <button onClick={onCancel} className="rounded-lg p-2 hover:bg-white/10"><X size={18}/></button>
+        </div>
+
+        <div className="px-5 py-5">
+          {isConfirm && (
+            <div className="text-slate-800">{message}</div>
+          )}
+          {isSuccess && (
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="text-emerald-600 shrink-0" size={22} />
+              <div className="text-slate-800">{message || 'Success.'}</div>
+            </div>
+          )}
+          {isError && (
+            <div className="flex items-start gap-3">
+              <XCircle className="text-rose-600 shrink-0" size={22} />
+              <div className="text-slate-800">{message || 'Failed.'}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-white/60 bg-white/70 px-5 py-3">
+          {isConfirm ? (
+            <>
+              <button onClick={onCancel} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
+              <button onClick={onConfirm} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+                {confirmLabel}
+              </button>
+            </>
+          ) : (
+            <button onClick={onCancel} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Close</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Pager ----------
+function Pager({ page, pages, onPage }) {
+  if (pages <= 1) return null;
+  const canPrev = page > 1;
+  const canNext = page < pages;
+
+  const windowSize = 1;
+  const blocks = [];
+  for (let i = 1; i <= pages; i++) {
+    if (i === 1 || i === pages || (i >= page - windowSize && i <= page + windowSize)) {
+      blocks.push(i);
+    } else if (blocks[blocks.length - 1] !== '…') {
+      blocks.push('…');
+    }
+  }
+
+  return (
+    <div className="mt-4 flex items-center justify-end gap-2">
+      <button
+        onClick={() => onPage(page - 1)}
+        disabled={!canPrev}
+        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm disabled:opacity-40"
+      >
+        <ChevronLeft size={16}/> Prev
+      </button>
+      {blocks.map((b, i) =>
+        b === '…' ? (
+          <span key={`d${i}`} className="px-1.5 text-slate-400">…</span>
+        ) : (
+          <button
+            key={b}
+            onClick={() => onPage(b)}
+            className={`h-8 w-8 rounded-lg text-sm font-medium ${b === page ? 'bg-slate-900 text-white' : 'border'}`}
+          >
+            {b}
+          </button>
+        )
+      )}
+      <button
+        onClick={() => onPage(page + 1)}
+        disabled={!canNext}
+        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm disabled:opacity-40"
+      >
+        Next <ChevronRight size={16}/>
+      </button>
+    </div>
+  );
+}
+
+// ---------- Page ----------
 export default function ProductsPage() {
   // data
   const [products, setProducts] = useState([]);
@@ -53,6 +180,9 @@ export default function ProductsPage() {
   const [ok, setOk] = useState('');
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
+
+  // pagination
+  const [page, setPage] = useState(1);
 
   // auth / role
   const [me, setMe] = useState(null);
@@ -72,6 +202,12 @@ export default function ProductsPage() {
   const [unitsProduct, setUnitsProduct] = useState(null); // product row
   const [addUnitRow, setAddUnitRow] = useState({ unit_id: '', rate: '' });
 
+  // confirmations
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMode, setConfirmMode] = useState('confirm'); // confirm | success | error
+  const [confirmMsg, setConfirmMsg] = useState('');
+  const [confirmAction, setConfirmAction] = useState(() => () => {}); // function to run on confirm
+
   // who am I?
   async function fetchMe() {
     try {
@@ -90,12 +226,11 @@ export default function ProductsPage() {
     try {
       const res = await api.get('/products'); // returns productUnits included
       const data = res?.data?.data ?? res?.data ?? [];
-      // sort alpha by productName
       setProducts((Array.isArray(data) ? data : []).slice().sort(byAlpha(p => p.productName)));
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Failed to load products');
     } finally {
-           setLoading(false);
+      setLoading(false);
     }
   }
 
@@ -104,9 +239,7 @@ export default function ProductsPage() {
       const r = await api.get('/units');
       const list = r?.data?.data ?? r?.data ?? [];
       setUnits((Array.isArray(list) ? list : []).slice().sort(byAlpha(u => u.name)));
-    } catch (e) {
-      // ignore; create/edit will still work without units list (except rates UI)
-    }
+    } catch {}
   }
 
   async function fetchCategories() {
@@ -134,6 +267,16 @@ export default function ProductsPage() {
       (p?.category?.name || p?.categoryName || '').toLowerCase().includes(term)
     );
   }, [q, products]);
+
+  // pagination slices
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageClamped = Math.min(page, pages);
+  const paged = useMemo(() => {
+    const start = (pageClamped - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, pageClamped]);
+
+  useEffect(() => { setPage(1); }, [q]); // reset when searching
 
   // open create
   const openCreate = () => {
@@ -190,18 +333,37 @@ export default function ProductsPage() {
     }
   }
 
-  // delete product
-  async function deleteProduct(p) {
+  // confirm helpers
+  function openConfirm({ message, onConfirm }) {
+    setConfirmMsg(message);
+    setConfirmAction(() => onConfirm);
+    setConfirmMode('confirm');
+    setConfirmOpen(true);
+  }
+  function closeConfirm() {
+    setConfirmOpen(false);
+    setConfirmMode('confirm');
+    setConfirmMsg('');
+    setConfirmAction(() => () => {});
+  }
+
+  // delete product (with custom confirm)
+  function requestDeleteProduct(p) {
     if (!isSuper) { setErr('Only Super Admin can delete products'); return; }
-    if (!window.confirm(`Delete product "${p.productName}"? This cannot be undone.`)) return;
-    setErr(''); setOk('');
-    try {
-      await api.delete(`/products/${p.id}`);
-      setOk('Product deleted');
-      await fetchProducts();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
-    }
+    openConfirm({
+      message: `Delete product “${p.productName}”? This cannot be undone.`,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/products/${p.id}`);
+          setConfirmMode('success');
+          setConfirmMsg('Product deleted.');
+          await fetchProducts();
+        } catch (e) {
+          setConfirmMode('error');
+          setConfirmMsg(e?.response?.data?.message || e?.message || 'Delete failed');
+        }
+      }
+    });
   }
 
   // units manager
@@ -228,7 +390,6 @@ export default function ProductsPage() {
       const rate = Number(addUnitRow.rate);
       if (!unitsProduct?.id || !unit_id || Number.isNaN(rate)) return;
       await api.post('/product-units', { product_id: unitsProduct.id, unit_id, rate });
-      // refresh
       const r = await api.get(`/product-units/product/${unitsProduct.id}`);
       const list = r?.data?.data ?? r?.data ?? [];
       setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha(x => x?.unit?.name)));
@@ -237,6 +398,25 @@ export default function ProductsPage() {
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Add failed');
     }
+  }
+
+  // remove unit (with custom confirm)
+  function requestRemoveUnit(puId) {
+    if (!isSuper) { setErr('Only Super Admin can remove unit rates'); return; }
+    openConfirm({
+      message: 'Remove this unit from the product?',
+      onConfirm: async () => {
+        try {
+          await api.delete(`/product-units/${puId}`);
+          setUnitsForProduct(prev => prev.filter(x => x.id !== puId));
+          setConfirmMode('success');
+          setConfirmMsg('Unit removed.');
+        } catch (e) {
+          setConfirmMode('error');
+          setConfirmMsg(e?.response?.data?.message || e?.message || 'Delete failed');
+        }
+      }
+    });
   }
 
   async function updateUnitRate(puId, newRate) {
@@ -250,20 +430,7 @@ export default function ProductsPage() {
     }
   }
 
-  async function removeUnitFromProduct(puId) {
-    if (!isSuper) { setErr('Only Super Admin can remove unit rates'); return; }
-    if (!window.confirm('Remove this unit from product?')) return;
-    setErr(''); setOk('');
-    try {
-      await api.delete(`/product-units/${puId}`);
-      setUnitsForProduct(prev => prev.filter(x => x.id !== puId));
-      setOk('Unit removed');
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
-    }
-  }
-
-  // UI
+  // ---------- UI ----------
   return (
     <div className="space-y-5">
       {/* header */}
@@ -310,7 +477,7 @@ export default function ProductsPage() {
       {/* grid */}
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {[...Array(6)].map((_,i)=>(
+          {[...Array(PAGE_SIZE)].map((_,i)=>(
             <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
           ))}
         </div>
@@ -319,61 +486,65 @@ export default function ProductsPage() {
           No products found.
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map(p => (
-            <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
-              <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
-              <div className="flex items-start gap-3">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
-                  <span className="text-lg font-semibold">{(p.productName || '?').charAt(0).toUpperCase()}</span>
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate text-base font-semibold text-slate-900">{p.productName || '—'}</h3>
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {paged.map(p => (
+              <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
+                <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
+                <div className="flex items-start gap-3">
+                  <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md">
+                    <span className="text-lg font-semibold">{(p.productName || '?').charAt(0).toUpperCase()}</span>
                   </div>
-                  <p className="truncate text-sm text-slate-600">{p.description || '—'}</p>
-                  <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
-                    <Tag size={14} /> {(p?.category?.name || 'Uncategorized')}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-base font-semibold text-slate-900">{p.productName || '—'}</h3>
+                    </div>
+                    <p className="truncate text-sm text-slate-600">{p.description || '—'}</p>
+                    <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                      <Tag size={14} /> {(p?.category?.name || 'Uncategorized')}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* rates */}
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {(p.productUnits || []).slice().sort(byAlpha(x => x?.unit?.name)).map(u => (
-                  <RateChip key={u.id} name={u?.unit?.name ?? '—'} rate={u?.rate ?? '—'} />
-                ))}
-                {(!p.productUnits || p.productUnits.length === 0) && (
-                  <span className="text-xs text-slate-400">No rates yet</span>
+                {/* rates */}
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {(p.productUnits || []).slice().sort(byAlpha(x => x?.unit?.name)).map(u => (
+                    <RateChip key={u.id} name={u?.unit?.name ?? '—'} rate={u?.rate ?? '—'} />
+                  ))}
+                  {(!p.productUnits || p.productUnits.length === 0) && (
+                    <span className="text-xs text-slate-400">No rates yet</span>
+                  )}
+                </div>
+
+                {/* actions (superadmin only) */}
+                {isSuper && (
+                  <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    <button
+                      onClick={() => openUnitsManager(p)}
+                      className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <DollarSign size={16} /> Manage Units
+                    </button>
+                    <button
+                      onClick={() => openEditProduct(p)}
+                      className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <Pencil size={16} /> Edit
+                    </button>
+                    <button
+                      onClick={() => requestDeleteProduct(p)}
+                      className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                    >
+                      <Trash2 size={16} /> Delete
+                    </button>
+                  </div>
                 )}
               </div>
+            ))}
+          </div>
 
-              {/* actions (superadmin only) */}
-              {isSuper && (
-                <div className="mt-4 flex flex-wrap justify-end gap-2">
-                  <button
-                    onClick={() => openUnitsManager(p)}
-                    className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                  >
-                    <DollarSign size={16} /> Manage Units
-                  </button>
-                  <button
-                    onClick={() => openEditProduct(p)}
-                    className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                  >
-                    <Pencil size={16} /> Edit
-                  </button>
-                  <button
-                    onClick={() => deleteProduct(p)}
-                    className="shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                  >
-                    <Trash2 size={16} /> Delete
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+          <Pager page={pageClamped} pages={pages} onPage={(p)=> setPage(Math.max(1, Math.min(pages, p)))} />
+        </>
       )}
 
       {/* Create/Edit Product */}
@@ -491,7 +662,7 @@ export default function ProductsPage() {
                   className="w-36 rounded-xl border px-3 py-2"
                 />
                 <button
-                  onClick={()=> removeUnitFromProduct(row.id)}
+                  onClick={()=> requestRemoveUnit(row.id)}
                   className="ml-auto rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
                 >
                   Remove
@@ -530,6 +701,16 @@ export default function ProductsPage() {
           </div>
         </div>
       </Modal>
+
+      {/* global confirm modal (for product delete & unit remove) */}
+      <ConfirmModal
+        open={confirmOpen}
+        mode={confirmMode}
+        message={confirmMsg}
+        onCancel={closeConfirm}
+        onConfirm={async () => { await confirmAction(); }}
+        confirmLabel="Delete"
+      />
     </div>
   );
 }

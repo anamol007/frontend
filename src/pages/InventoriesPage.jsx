@@ -1,6 +1,6 @@
 // src/pages/InventoriesPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, RefreshCw, Info, MapPin, Phone, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { Search, RefreshCw, Info, MapPin, Phone, Plus, Pencil, Trash2, X, ShieldAlert } from 'lucide-react';
 import { api } from '../utils/api';
 
 /* ---------------- helpers ---------------- */
@@ -178,6 +178,41 @@ function StatsPopup({ inv, stats, items, loading, onClose }) {
   );
 }
 
+/* ---------------- Confirm Dialog (custom) ---------------- */
+function ConfirmDialog({ open, title, message, onConfirm, onCancel }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[70]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/90 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+        <div className="flex items-center gap-3 border-b px-5 py-4">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-rose-50 text-rose-600">
+            <ShieldAlert size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-base font-semibold text-slate-900">{title}</div>
+            <div className="text-xs text-slate-500">{message}</div>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-4">
+          <button
+            onClick={onCancel}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+          >
+            <Trash2 size={16}/> Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- Main Page ---------------- */
 export default function InventoriesPage() {
   // auth / role
@@ -199,6 +234,13 @@ export default function InventoriesPage() {
   const [statsCache, setStatsCache] = useState({});
   const [itemsCache, setItemsCache] = useState({});
   const [itemsLoading, setItemsLoading] = useState(false);
+
+  // delete confirm
+  const [confirm, setConfirm] = useState({ open: false, row: null });
+
+  // pagination
+  const PER_PAGE = 5;
+  const [page, setPage] = useState(1);
 
   // --- Fetch me (role) + list ---
   async function fetchMe() {
@@ -240,6 +282,15 @@ export default function InventoriesPage() {
     );
   }, [rows, q]);
 
+  // pagination derived
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [currentPage, page]);
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * PER_PAGE;
+    return filtered.slice(start, start + PER_PAGE);
+  }, [filtered, currentPage]);
+
   // --- CRUD actions (superadmin only) ---
   const openCreate = () => {
     if (!isSuper) { setErr('Only Super Admin can create inventories'); return; }
@@ -264,15 +315,23 @@ export default function InventoriesPage() {
       }
       setModalOpen(false);
       setEditRow(null);
+      setPage(1);
       await fetchAll();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Save failed');
     }
   }
 
-  async function handleDelete(row) {
+  // open custom confirm
+  function askDelete(row) {
     if (!isSuper) { setErr('Only Super Admin can delete inventories'); return; }
-    if (!window.confirm(`Delete inventory "${row.inventoryName}"?`)) return;
+    setConfirm({ open: true, row });
+  }
+
+  async function confirmDelete() {
+    const row = confirm.row;
+    setConfirm({ open: false, row: null });
+    if (!row) return;
     setErr(''); setOk('');
     try {
       await api.delete(`/inventory/${row.id}`);
@@ -298,7 +357,7 @@ export default function InventoriesPage() {
         const r2 = await api.get(`/stock/inventory/${row.id}`);
         const items = r2?.data?.data ?? r2?.data ?? [];
         setItemsCache(prev=>({ ...prev, [row.id]: items }));
-        // ⬇️ compute and inject stockByUnit if backend didn't provide it / it's zero
+        // compute/inject stockByUnit if needed
         const stockByUnit = buildStockByUnit(items);
         setStatsCache(prev => {
           const current = prev[row.id] || {};
@@ -329,7 +388,7 @@ export default function InventoriesPage() {
               <Search size={16} className="text-slate-400" />
               <input
                 value={q}
-                onChange={(e)=> setQ(e.target.value)}
+                onChange={(e)=> { setQ(e.target.value); setPage(1); }}
                 placeholder="Search name, address, phone…"
                 className="w-64 bg-transparent outline-none text-sm"
               />
@@ -361,13 +420,13 @@ export default function InventoriesPage() {
             <div key={i} className="h-36 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : paged.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
           No inventories found.
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map(inv => (
+          {paged.map(inv => (
             <div
               key={inv.id}
               className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
@@ -400,7 +459,7 @@ export default function InventoriesPage() {
                       <Pencil size={16}/> Edit
                     </button>
                     <button
-                      onClick={() => handleDelete(inv)}
+                      onClick={() => askDelete(inv)}
                       className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
                     >
                       <Trash2 size={16}/> Delete
@@ -420,6 +479,48 @@ export default function InventoriesPage() {
         </div>
       )}
 
+      {/* Pagination (matches other pages) */}
+      <div className="flex items-center justify-center gap-2 pt-1 pb-6">
+        <button
+          onClick={() => setPage(p => Math.max(1, p - 1))}
+          disabled={currentPage === 1}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+          title="Previous"
+        >
+          <span className="opacity-60">‹</span> Prev
+        </button>
+
+        {(() => {
+          const nums = [];
+          const start = Math.max(1, currentPage - 1);
+          const end = Math.min(totalPages, currentPage + 1);
+          for (let i = start; i <= end; i++) nums.push(i);
+          if (currentPage === 1 && totalPages >= 2 && !nums.includes(2)) nums.push(2);
+          return nums.map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={
+                n === currentPage
+                  ? "rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                  : "rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm hover:bg-gray-50"
+              }
+            >
+              {n}
+            </button>
+          ));
+        })()}
+
+        <button
+          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+          disabled={currentPage === totalPages}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+          title="Next"
+        >
+          Next <span className="opacity-60">›</span>
+        </button>
+      </div>
+
       {/* Inline modals */}
       <EditModal
         open={modalOpen}
@@ -437,6 +538,15 @@ export default function InventoriesPage() {
           onClose={()=> setOpenStats(null)}
         />
       )}
+
+      {/* Custom delete confirmation */}
+      <ConfirmDialog
+        open={confirm.open}
+        title="Delete Inventory?"
+        message={confirm.row ? `This will permanently remove "${confirm.row.inventoryName}".` : ''}
+        onCancel={() => setConfirm({ open: false, row: null })}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

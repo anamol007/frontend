@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Search, Plus, Pencil, Trash2, RefreshCw, Truck, Package, ClipboardList, X, Info, AlertTriangle, Banknote,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 } from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
@@ -21,7 +22,7 @@ const prettyDateTime = (d) => {
   return `${M} ${D}, ${Y}, ${T}`;
 };
 
-// ---- normalize (defensive against snake/camel/backref shapes)
+// normalize shapes
 const norm = (d = {}) => ({
   id: d.id ?? d.ID ?? null,
   order_id: d.order_id ?? d.orderId ?? d.order?.id ?? null,
@@ -57,7 +58,7 @@ async function pMap(items, mapper, { concurrency = 5 } = {}) {
   });
 }
 
-/* ---------------- UI bits ---------------- */
+/* ---------------- Small UI bits ---------------- */
 function Pill({ children }) {
   return (
     <span className="inline-flex items-center rounded-xl bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
@@ -84,7 +85,96 @@ function RowKV({ k, v }) {
   );
 }
 
-function DeliveryCard({ d, onEdit, onDelete, onView, canManage }) {
+/* ---------------- Pagination (same style as other pages) ---------------- */
+function Pagination({ total, page, perPage, onPage }) {
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  const goto = (p) => onPage(Math.min(pages, Math.max(1, p)));
+
+  // compact window around current page
+  const windowSize = 3;
+  let lo = Math.max(1, page - 1);
+  let hi = Math.min(pages, lo + windowSize - 1);
+  lo = Math.max(1, hi - windowSize + 1);
+
+  const nums = [];
+  for (let p = lo; p <= hi; p++) nums.push(p);
+
+  const btnBase =
+    "inline-flex items-center gap-1 rounded-2xl border px-4 py-2 text-sm transition";
+  const pill =
+    "rounded-2xl px-3 py-2 text-sm font-semibold";
+
+  return (
+    <div className="mt-6 flex justify-center">
+      <div className="flex items-center gap-2">
+        {/* Prev */}
+        <button
+          onClick={() => goto(page - 1)}
+          disabled={page === 1}
+          className={`${btnBase} border-slate-200 bg-white text-slate-600 disabled:opacity-40`}
+        >
+          <ChevronLeft size={16} />
+          Prev
+        </button>
+
+        {/* Numbers */}
+        {nums.map((n) =>
+          n === page ? (
+            <span
+              key={n}
+              className={`${pill} bg-slate-900 text-white shadow`}
+            >
+              {n}
+            </span>
+          ) : (
+            <button
+              key={n}
+              onClick={() => goto(n)}
+              className={`${btnBase} border-slate-200 bg-white text-slate-900 hover:bg-slate-50`}
+            >
+              {n}
+            </button>
+          )
+        )}
+
+        {/* Next */}
+        <button
+          onClick={() => goto(page + 1)}
+          disabled={page === pages}
+          className={`${btnBase} border-slate-200 bg-white text-slate-600 disabled:opacity-40`}
+        >
+          Next
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Confirm Dialog (custom modal) ---------------- */
+function ConfirmDialog({ open, title = 'Are you sure?', body, confirmLabel = 'Confirm', tone='rose', onCancel, onConfirm }) {
+  if (!open) return null;
+  const toneBg = tone === 'rose' ? 'from-rose-600 to-pink-600' : 'from-emerald-600 to-teal-600';
+  return (
+    <div className="fixed inset-0 z-[80]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[520px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/90 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+        <div className={`flex items-center justify-between bg-gradient-to-br ${toneBg} px-5 py-3 text-white`}>
+          <div className="font-semibold">{title}</div>
+          <button onClick={onCancel} className="rounded-lg p-2 hover:bg-white/10"><X size={18}/></button>
+        </div>
+        <div className="p-5 text-sm text-slate-700">{body}</div>
+        <div className="flex justify-end gap-2 border-t border-white/60 bg-white/70 px-5 py-3">
+          <button onClick={onCancel} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
+          <button onClick={onConfirm} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Delivery Card ---------------- */
+function DeliveryCard({ d, onEdit, onDeleteAsk, onView, canManage }) {
   const od = norm(d);
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
@@ -133,7 +223,7 @@ function DeliveryCard({ d, onEdit, onDelete, onView, canManage }) {
               <Pencil size={16} /> Edit
             </button>
             <button
-              onClick={() => onDelete(od)}
+              onClick={() => onDeleteAsk(od)}
               className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
             >
               <Trash2 size={16} /> Delete
@@ -149,7 +239,10 @@ function DeliveryCard({ d, onEdit, onDelete, onView, canManage }) {
 export default function DeliveriesPage() {
   // auth / role
   const [me, setMe] = useState(null);
-  const isSuper = me?.role === 'superadmin';
+  const role = me?.role || '';
+  const isSuper = role === 'superadmin';
+  const isAdmin = role === 'admin'; // admin can edit/delete, but not create
+  const canManage = isSuper || isAdmin;
 
   // data
   const [rows, setRows] = useState([]);
@@ -164,6 +257,11 @@ export default function DeliveriesPage() {
   // filters
   const [q, setQ] = useState('');
   const [driverFilter, setDriverFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(''); // '', 'Pending', 'Out for delivery', 'Completed'
+
+  // pagination
+  const [page, setPage] = useState(1);
+  const [perPage] = useState(9);
 
   // modal (form)
   const [openForm, setOpenForm] = useState(false);
@@ -175,30 +273,28 @@ export default function DeliveriesPage() {
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectErr, setInspectErr] = useState('');
 
-  // permissions / lazy orders loading
+  // orders loading (for create/edit)
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersErr, setOrdersErr] = useState('');
-  const [canManage, setCanManage] = useState(false); // toggled true for superadmin
 
-  // 🔒 admin inventory filtering state
-  const [myInvId, setMyInvId] = useState(null);            // the single inventory admin can see
-  const [orderInvMap, setOrderInvMap] = useState({});      // orderId -> inventoryId
+  // inventory scoping for admin
+  const [myInvId, setMyInvId] = useState(null);
+  const [orderInvMap, setOrderInvMap] = useState({});
   const [filterResolving, setFilterResolving] = useState(false);
 
-  // who am I?
+  // custom confirm
+  const [confirm, setConfirm] = useState({ open: false, row: null });
+
   async function fetchMe() {
     try {
       const r = await api.get('/users/verify-token');
       const u = r?.data?.data?.user || r?.data?.user || r?.data;
       setMe(u || null);
-      setCanManage((u?.role || '') === 'superadmin');
     } catch {
       setMe(null);
-      setCanManage(false);
     }
   }
 
-  // -------- fetch public data (deliveries + drivers)
   async function fetchPublic() {
     try {
       setLoading(true);
@@ -217,7 +313,6 @@ export default function DeliveriesPage() {
     }
   }
 
-  // 🔎 find the admin's inventory (using your /summary endpoint)
   async function resolveMyInventoryIdIfNeeded() {
     if (isSuper || myInvId != null) return myInvId;
     try {
@@ -227,12 +322,10 @@ export default function DeliveriesPage() {
       if (first) setMyInvId(Number(first));
       return first || null;
     } catch {
-      // keep null; filtering will show nothing for admins if we can't confirm inventory
       return null;
     }
   }
 
-  // 📦 build a map orderId -> inventoryId (for client filtering)
   async function buildOrderInventoryMap(orderIds) {
     const uniq = Array.from(new Set(orderIds.filter(Boolean).map(Number)));
     const missing = uniq.filter((id) => !(id in orderInvMap));
@@ -248,9 +341,7 @@ export default function DeliveriesPage() {
           const order = r?.data?.data || r?.data;
           const invId = order?.inventory?.id ?? order?.inventoryId ?? order?.inventory_id ?? null;
           if (invId != null) nextMap[id] = Number(invId);
-        } catch {
-          // leave undefined; those rows will be excluded for admins
-        }
+        } catch {}
       }, { concurrency: 5 });
 
       setOrderInvMap(nextMap);
@@ -260,25 +351,21 @@ export default function DeliveriesPage() {
     }
   }
 
-  // initial loads
   useEffect(() => { fetchMe(); }, []);
   useEffect(() => { fetchPublic(); }, []);
 
-  // when rows change & user is admin, fetch mapping and inventory id
   useEffect(() => {
     (async () => {
       if (!rows.length) return;
-      // resolve admin inventory
       const invId = await resolveMyInventoryIdIfNeeded();
       if (isSuper || !invId) return;
-      // fetch order → inventory mapping
       const ids = rows.map((r) => r.order_id || r.order?.id).filter(Boolean);
       if (ids.length) await buildOrderInventoryMap(ids);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, isSuper]);
 
-  // 🔄 auto refresh
+  // auto refresh
   useEffect(() => {
     const tick = () => { if (!loading) fetchPublic(); };
     const id = setInterval(tick, 30000);
@@ -296,9 +383,9 @@ export default function DeliveriesPage() {
     };
   }, [loading]);
 
-  // -------- lazy load orders (superadmin only). Use only confirmed for dropdown.
+  // ensure orders for form (superadmin create; admins can edit)
   async function ensureOrdersLoaded() {
-    if (!isSuper) { setErr('Only Super Admin can manage deliveries'); return false; }
+    if (!isSuper) return true; // admins can open edit without loading orders list if you keep order/driver fixed
     if (orders.length > 0 || ordersLoading) return true;
     try {
       setOrdersErr('');
@@ -315,7 +402,6 @@ export default function DeliveriesPage() {
     }
   }
 
-  // options
   const driverOptions = useMemo(() => {
     const opts = (drivers || []).map((d) => {
       const label =
@@ -338,11 +424,10 @@ export default function DeliveriesPage() {
     return opts.sort(sortByLabel);
   }, [orders]);
 
-  // base list for role: superadmin = everything; admin = only my inventory
+  // scope admins to their inventory
   const roleScopedRows = useMemo(() => {
     if (isSuper) return rows;
-    if (!myInvId) return []; // cannot determine admin’s inventory → show nothing (safe)
-    // keep if orderInvMap says this order belongs to myInvId
+    if (!myInvId) return [];
     return rows.filter((r) => {
       const oid = r.order_id || r.order?.id;
       const invId = oid ? orderInvMap[oid] : null;
@@ -350,32 +435,45 @@ export default function DeliveriesPage() {
     });
   }, [rows, isSuper, myInvId, orderInvMap]);
 
+  // apply filters
   const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
     let list = roleScopedRows;
+
     if (driverFilter) {
       list = list.filter((d) => {
         const id = d?.driver_id ?? d?.driverId ?? d?.driver?.id;
         return String(id) === String(driverFilter);
       });
     }
+
+    if (statusFilter) {
+      const s = statusFilter.toLowerCase();
+      list = list.filter(d => (d.deliveryStatus || '').toLowerCase() === s);
+    }
+
+    const query = q.trim().toLowerCase();
     if (!query) return list;
     return list.filter((d) => {
       const nd = norm(d);
       const hay =
         `delivery#${nd.id} order#${nd.order_id} driver#${nd.driver_id} ` +
-        `${nd.driver?.user?.fullname || ''} ${nd.order?.product?.productName || ''}`;
+        `${nd.driver?.user?.fullname || ''} ${nd.order?.product?.productName || ''} ${nd.deliveryStatus || ''}`;
       return hay.toLowerCase().includes(query);
     });
-  }, [roleScopedRows, q, driverFilter]);
+  }, [roleScopedRows, q, driverFilter, statusFilter]);
 
-  // STRICT fields: only those your backend accepts
+  // pagination
+  const paged = useMemo(() => {
+    const start = (page - 1) * perPage;
+    return filtered.slice(start, start + perPage);
+  }, [filtered, page, perPage]);
+
+  // fields (strict)
   const FIELDS = useMemo(() => ([
     { name: 'order_id',  type: 'select', label: ordersLoading ? 'Order (loading...)' : 'Order',  required: true, options: orderOptions },
     { name: 'driver_id', type: 'select', label: 'Driver', required: true, options: driverOptions },
   ]), [orderOptions, driverOptions, ordersLoading]);
 
-  // sanitizer
   function sanitize(fields, payload) {
     const allow = new Set(fields.map(f => f.name));
     const out = {};
@@ -388,9 +486,8 @@ export default function DeliveriesPage() {
     return out;
   }
 
-  // submit (superadmin only)
   async function handleSubmit(form) {
-    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
+    if (!canManage) { setErr('You do not have permission to modify deliveries'); return; }
     try {
       setErr(''); setOk('');
       const body = sanitize(FIELDS, form);
@@ -398,6 +495,7 @@ export default function DeliveriesPage() {
         await api.put(`/deliveries/${editRow.id}`, body);
         setOk('Delivery updated');
       } else {
+        if (!isSuper) { setErr('Only Super Admin can create deliveries'); return; }
         await api.post('/deliveries', body);
         setOk('Delivery created');
       }
@@ -409,34 +507,40 @@ export default function DeliveriesPage() {
     }
   }
 
-  async function handleDelete(row) {
-    if (!isSuper) { setErr('Only Super Admin can delete deliveries'); return; }
-    if (!window.confirm(`Delete delivery #${row.id}?`)) return;
+  function askDelete(row) {
+    if (!canManage) { setErr('You do not have permission to delete deliveries'); return; }
+    setConfirm({ open: true, row });
+  }
+  async function confirmDelete() {
+    const row = confirm.row;
+    if (!row) { setConfirm({ open: false, row: null }); return; }
     try {
       setErr(''); setOk('');
       await api.delete(`/deliveries/${row.id}`);
       setOk('Delivery deleted');
+      setConfirm({ open: false, row: null });
       await fetchPublic();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Delete failed');
+      setConfirm({ open: false, row: null });
     }
   }
 
-  // open create/edit: make sure orders are loaded
   async function openCreate() {
+    if (!isSuper) { setErr('Only Super Admin can create deliveries'); return; }
     const ok = await ensureOrdersLoaded();
     if (!ok) return;
     setEditRow(null);
     setOpenForm(true);
   }
   async function openEdit(row) {
+    if (!canManage) { setErr('You do not have permission to edit'); return; }
     const ok = await ensureOrdersLoaded();
-    if (!ok) return;
+    if (!ok && isSuper) return;
     setEditRow(row);
     setOpenForm(true);
   }
 
-  // open view: fetch full order details for richer modal
   async function openView(row) {
     setInspect(row);
     setInspectOrder(null);
@@ -455,6 +559,12 @@ export default function DeliveriesPage() {
     }
   }
 
+  // reset page when filters/search change
+  useEffect(() => { setPage(1); }, [q, driverFilter, statusFilter]);
+
+  // options for selects
+  const driverOptionsForFilter = driverOptions;
+
   return (
     <div className="space-y-5">
       {/* Header / controls */}
@@ -465,7 +575,7 @@ export default function DeliveriesPage() {
             <p className="text-sm text-slate-500">
               {isSuper
                 ? 'Link orders to drivers. Create, edit, filter and inspect.'
-                : 'Browse deliveries from your inventory.'}
+                : (isAdmin ? 'Manage deliveries for your inventory (edit/delete only).' : 'Browse deliveries.')}
             </p>
           </div>
 
@@ -476,21 +586,35 @@ export default function DeliveriesPage() {
               <input
                 value={q}
                 onChange={(e)=> setQ(e.target.value)}
-                placeholder="Search order/driver…"
+                placeholder="Search order/driver/status…"
                 className="w-56 bg-transparent outline-none text-sm"
               />
             </div>
 
-            {/* filter by driver */}
+            {/* driver filter */}
             <select
               value={driverFilter}
               onChange={(e)=> setDriverFilter(e.target.value)}
               className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200"
+              title="Filter by driver"
             >
               <option value="">All drivers</option>
-              {driverOptions.map((o)=>(
+              {driverOptionsForFilter.map((o)=>(
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
+            </select>
+
+            {/* status filter */}
+            <select
+              value={statusFilter}
+              onChange={(e)=> setStatusFilter(e.target.value)}
+              className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
+              title="Filter by status"
+            >
+              <option value="">All status</option>
+              <option value="Pending">Pending</option>
+              <option value="Out for delivery">Out for delivery</option>
+              <option value="Completed">Completed</option>
             </select>
 
             {/* refresh */}
@@ -526,7 +650,7 @@ export default function DeliveriesPage() {
         )}
 
         {/* admin-only hint while filtering resolves */}
-        {!isSuper && (filterResolving || (rows.length && !Object.keys(orderInvMap).length)) && (
+        {isAdmin && (filterResolving || (rows.length && !Object.keys(orderInvMap).length)) && (
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
             Filtering deliveries to your inventory…
           </div>
@@ -542,24 +666,32 @@ export default function DeliveriesPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
-          No deliveries found. Try a different search or driver filter.
+          No deliveries found. Try a different search/filters.
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((d)=>(
-            <DeliveryCard
-              key={d.id}
-              d={d}
-              onEdit={openEdit}
-              onDelete={handleDelete}
-              onView={openView}
-              canManage={isSuper}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {paged.map((d)=>(
+              <DeliveryCard
+                key={d.id}
+                d={d}
+                onEdit={openEdit}
+                onDeleteAsk={askDelete}
+                onView={openView}
+                canManage={canManage}
+              />
+            ))}
+          </div>
+          <Pagination
+            total={filtered.length}
+            page={page}
+            perPage={perPage}
+            onPage={setPage}
+          />
+        </>
       )}
 
-      {/* Create/Edit Modal (superadmin only, but guarded too) */}
+      {/* Create/Edit Modal */}
       <FormModal
         title={editRow ? 'Edit Delivery' : 'Create Delivery'}
         open={openForm}
@@ -584,7 +716,6 @@ export default function DeliveriesPage() {
               <X size={16} />
             </button>
 
-            {/* Header */}
             <div className="mb-4 flex items-center gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-900 text-white">
                 <ClipboardList size={18} />
@@ -595,9 +726,7 @@ export default function DeliveriesPage() {
               </div>
             </div>
 
-            {/* Body */}
             <div className="grid gap-3">
-              {/* ORDER */}
               <Section title="Order">
                 <div className="flex flex-wrap items-center gap-2">
                   <Pill>#{inspect.order?.id ?? inspect.order_id ?? '—'}</Pill>
@@ -623,7 +752,6 @@ export default function DeliveriesPage() {
                 </div>
               </Section>
 
-              {/* CUSTOMER & INVENTORY */}
               <div className="grid gap-3 md:grid-cols-2">
                 <Section title="Customer">
                   <div className="grid gap-1">
@@ -646,7 +774,6 @@ export default function DeliveriesPage() {
                 </Section>
               </div>
 
-              {/* DRIVER */}
               <Section title="Driver">
                 <div className="grid gap-1">
                   <div className="font-medium">
@@ -659,7 +786,6 @@ export default function DeliveriesPage() {
                 </div>
               </Section>
 
-              {/* DELIVERY META */}
               {(inspect.deliveryStatus || inspect.deliveryDate || inspect.deliveryAddress || inspect.createdAt || inspect.updatedAt) && (
                 <Section title="Delivery info">
                   <div className="grid gap-2">
@@ -684,7 +810,6 @@ export default function DeliveriesPage() {
               )}
             </div>
 
-            {/* Footer */}
             <div className="mt-5 flex justify-end">
               <button
                 onClick={()=> { setInspect(null); setInspectOrder(null); }}
@@ -696,6 +821,17 @@ export default function DeliveriesPage() {
           </div>
         </div>
       )}
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={confirm.open}
+        title="Delete delivery"
+        body={confirm.row ? `Are you sure you want to delete delivery #${confirm.row.id}? This cannot be undone.` : ''}
+        confirmLabel="Delete"
+        tone="rose"
+        onCancel={()=> setConfirm({ open: false, row: null })}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

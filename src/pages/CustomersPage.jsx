@@ -1,9 +1,12 @@
 // src/pages/CustomersPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { UserCircle2, Plus, Pencil, Trash2, Search, RefreshCw, Phone, MapPin } from 'lucide-react';
+import {
+  UserCircle2, Plus, Pencil, Trash2, Search, RefreshCw, Phone, MapPin, ShieldAlert, X, Check
+} from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
 
+/* ---------------- Avatar ---------------- */
 function Avatar({ name = '' }) {
   const letter = (name || '?').trim().charAt(0).toUpperCase();
   return (
@@ -13,6 +16,7 @@ function Avatar({ name = '' }) {
   );
 }
 
+/* ---------------- Stat pill ---------------- */
 function StatPill({ icon: Icon, label, value, tone = 'indigo' }) {
   const tones = {
     indigo: 'from-indigo-500/10 to-violet-500/10 text-indigo-700',
@@ -31,6 +35,42 @@ function StatPill({ icon: Icon, label, value, tone = 'indigo' }) {
   );
 }
 
+/* ---------------- Confirm Dialog ---------------- */
+function ConfirmDialog({ open, title, message, confirmLabel = 'Delete', onConfirm, onCancel }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[70]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[440px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/90 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+        <div className="flex items-center gap-3 border-b px-5 py-4">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-rose-50 text-rose-600">
+            <ShieldAlert size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-base font-semibold text-slate-900">{title}</div>
+            <div className="text-xs text-slate-500">{message}</div>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-4">
+          <button
+            onClick={onCancel}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+          >
+            <Trash2 size={16} /> {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Page ---------------- */
 export default function CustomersPage() {
   // who am I? (for role gating)
   const [me, setMe] = useState(null);
@@ -40,7 +80,6 @@ export default function CustomersPage() {
 
   // data
   const [rows, setRows] = useState([]);
-  const [coords, setCoords] = useState([]); // for coordinateId dropdown
 
   // ui
   const [loading, setLoading] = useState(true);
@@ -52,7 +91,14 @@ export default function CustomersPage() {
   const [open, setOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  // ---------- API calls
+  // confirm delete
+  const [confirm, setConfirm] = useState({ open: false, row: null });
+
+  // pagination
+  const PER_PAGE = 5;
+  const [page, setPage] = useState(1);
+
+  /* ----- API ----- */
   async function verifyMe() {
     try {
       const r = await api.get('/users/verify-token');
@@ -76,20 +122,10 @@ export default function CustomersPage() {
     }
   }
 
-  async function fetchCoords() {
-    try {
-      const r = await api.get('/coordinates');
-      const data = r?.data?.data ?? r?.data ?? [];
-      setCoords(Array.isArray(data) ? data : []);
-    } catch {
-      // optional; ignore if not available
-    }
-  }
-
   // server-side search (debounced)
   useEffect(() => {
     const t = setTimeout(async () => {
-      if (!q.trim()) return fetchAll();
+      if (!q.trim()) { fetchAll(); return; }
       setLoading(true); setErr(''); setOk('');
       try {
         const r = await api.get('/customers/search', { params: { query: q.trim() } });
@@ -105,26 +141,31 @@ export default function CustomersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  useEffect(() => { verifyMe(); fetchAll(); fetchCoords(); }, []);
+  useEffect(() => { verifyMe(); fetchAll(); }, []);
 
-  // ---------- Derived: alpha sort by fullname
+  /* ----- Derived ----- */
   const sorted = useMemo(() => {
     return [...rows].sort((a,b) => (a.fullname || '').localeCompare(b.fullname || ''));
   }, [rows]);
 
-  // ---------- Fields (STRICT to backend spec)
-  const COORD_OPTIONS = useMemo(() => coords.map(c => c.id).sort((a,b)=>a-b), [coords]);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+  useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [currentPage, page]);
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * PER_PAGE;
+    return sorted.slice(start, start + PER_PAGE);
+  }, [sorted, currentPage]);
 
-  // Backend requires fullname, phoneNumber, address (all required for create)
+  /* ----- Form fields (address + lat/lon are required) ----- */
   const CREATE_FIELDS = [
-    { name: 'fullname',     type: 'text',    label: 'Full Name',     required: true },
-    { name: 'phoneNumber',  type: 'text',    label: 'Phone Number',  required: true },
-    { name: 'address',      type: 'text',    label: 'Address',       required: true }, // now required to match backend
-    { name: 'coordinateId', type: 'select',  label: 'Coordinate ID (optional)', options: COORD_OPTIONS },
+    { name: 'fullname',     type: 'text',   label: 'Full Name',      required: true },
+    { name: 'phoneNumber',  type: 'text',   label: 'Phone Number',   required: true },
+    { name: 'address',      type: 'text',   label: 'Address',        required: true },
+    { name: 'latitude',     type: 'number', label: 'Latitude',       required: true, step: 'any' },
+    { name: 'longitude',    type: 'number', label: 'Longitude',      required: true, step: 'any' },
   ];
   const EDIT_FIELDS = CREATE_FIELDS;
 
-  // keep only allowed fields
   const sanitize = (fields, obj) => {
     const allow = new Set(fields.map(f => f.name));
     const out = {};
@@ -132,21 +173,20 @@ export default function CustomersPage() {
       const v = obj[k];
       if (allow.has(k) && v !== '' && v != null) out[k] = v;
     }
+    if (out.latitude != null) out.latitude = Number(out.latitude);
+    if (out.longitude != null) out.longitude = Number(out.longitude);
     return out;
   };
 
   async function handleSubmit(form) {
-    // Admin OR Superadmin can create
     const canCreate = isSuper || isAdmin;
+    const visibleFields = editRow?.id && isSuper ? EDIT_FIELDS : CREATE_FIELDS;
+    const body = sanitize(visibleFields, form);
+
     if (editRow?.id) {
-      // Only Superadmin can edit
-      if (!isSuper) {
-        setErr('Admins cannot edit customers. Only superadmin can edit.');
-        return;
-      }
+      if (!isSuper) { setErr('Admins cannot edit customers. Only superadmin can edit.'); return; }
       try {
         setErr(''); setOk('');
-        const body = sanitize(EDIT_FIELDS, form);
         await api.put(`/customers/${editRow.id}`, body);
         setOk('Customer updated');
         setOpen(false); setEditRow(null);
@@ -157,29 +197,29 @@ export default function CustomersPage() {
       return;
     }
 
-    // Create path
-    if (!canCreate) {
-      setErr('You do not have permission to create customers.');
-      return;
-    }
+    if (!canCreate) { setErr('You do not have permission to create customers.'); return; }
     try {
       setErr(''); setOk('');
-      const body = sanitize(CREATE_FIELDS, form);
       await api.post('/customers', body);
       setOk('Customer created');
       setOpen(false); setEditRow(null);
+      setPage(1);
       await fetchAll();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Action failed');
     }
   }
 
-  async function handleDelete(row) {
-    if (!isSuper) {
-      setErr('Only superadmin can delete customers.');
-      return;
-    }
-    if (!window.confirm(`Delete customer "${row.fullname}"?`)) return;
+  /* ----- Delete (uses custom popup) ----- */
+  function askDelete(row) {
+    if (!isSuper) { setErr('Only superadmin can delete customers.'); return; }
+    setConfirm({ open: true, row });
+  }
+
+  async function confirmDelete() {
+    const row = confirm.row;
+    setConfirm({ open: false, row: null });
+    if (!row) return;
     try {
       setErr(''); setOk('');
       await api.delete(`/customers/${row.id}`);
@@ -190,9 +230,11 @@ export default function CustomersPage() {
     }
   }
 
-  // ---------- Stats
+  /* ----- Stats ----- */
   const totalCustomers = sorted.length;
-  const withCoords = sorted.filter(c => c.coordinateId != null).length;
+  const withCoords = sorted.filter(c =>
+    (c.latitude != null && c.longitude != null) || (c.lat != null && c.lon != null)
+  ).length;
 
   return (
     <div className="space-y-5 bg-gradient-to-br from-slate-50 via-indigo-50 to-emerald-50/40">
@@ -218,13 +260,12 @@ export default function CustomersPage() {
               <Search size={16} className="text-slate-400" />
               <input
                 value={q}
-                onChange={(e)=> setQ(e.target.value)}
+                onChange={(e)=> { setQ(e.target.value); setPage(1); }}
                 placeholder="Search customers…"
                 className="w-full bg-transparent outline-none text-sm placeholder:text-slate-400 sm:w-56"
               />
             </div>
 
-            {/* Actions */}
             {(isSuper || isAdmin) && (
               <button
                 onClick={()=>{ setEditRow(null); setOpen(true); }}
@@ -260,20 +301,18 @@ export default function CustomersPage() {
             <div key={i} className="h-36 animate-pulse rounded-2xl border border-white/60 bg-white/60 backdrop-blur-xl" />
           ))}
         </div>
-      ) : sorted.length === 0 ? (
+      ) : paged.length === 0 ? (
         <div className="rounded-2xl border border-white/60 bg-white/70 p-10 text-center text-slate-500 backdrop-blur-xl">
           No customers found.
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {sorted.map(c => (
+          {paged.map(c => (
             <div
               key={c.id}
               className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 p-4 shadow-[0_1px_0_rgba(255,255,255,.6),0_18px_40px_-18px_rgba(2,6,23,.35)] backdrop-blur-xl transition-shadow hover:shadow-xl"
             >
-              {/* sheen */}
               <div className="pointer-events-none absolute -top-16 -right-16 h-28 w-28 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
-
               <div className="flex items-start gap-3">
                 <Avatar name={c.fullname} />
                 <div className="min-w-0">
@@ -287,13 +326,14 @@ export default function CustomersPage() {
                     <span className="truncate">{c.address || '—'}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
-                    ID: {c.id ?? '—'} {c.coordinateId != null ? `• Coord: ${c.coordinateId}` : ''}
+                    ID: {c.id ?? '—'}
+                    {(c.latitude ?? c.lat) != null && (c.longitude ?? c.lon) != null
+                      ? ` • (${c.latitude ?? c.lat}, ${c.longitude ?? c.lon})` : ''}
                   </p>
                 </div>
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-                {/* Actions */}
                 {isSuper ? (
                   <div className="flex gap-2">
                     <button
@@ -303,7 +343,7 @@ export default function CustomersPage() {
                       <Pencil size={16} /> Edit
                     </button>
                     <button
-                      onClick={()=> handleDelete(c)}
+                      onClick={()=> askDelete(c)}
                       className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
                     >
                       <Trash2 size={16} /> Delete
@@ -320,9 +360,50 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* Create / Edit modal
-          - Superadmin: create + edit
-          - Admin: create only (we still use same modal but guard edit path in handleSubmit) */}
+      {/* Pagination (matching other pages) */}
+      <div className="flex items-center justify-center gap-2 pt-2 pb-6">
+        <button
+          onClick={() => setPage(p => Math.max(1, p - 1))}
+          disabled={currentPage === 1}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+          title="Previous"
+        >
+          <span className="opacity-60">‹</span> Prev
+        </button>
+
+        {(() => {
+          const nums = [];
+          const start = Math.max(1, currentPage - 1);
+          const end = Math.min(totalPages, currentPage + 1);
+          for (let i = start; i <= end; i++) nums.push(i);
+          if (currentPage === 1 && totalPages >= 2 && !nums.includes(2)) nums.push(2);
+
+          return nums.map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={
+                n === currentPage
+                  ? "rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                  : "rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm hover:bg-gray-50"
+              }
+            >
+              {n}
+            </button>
+          ));
+        })()}
+
+        <button
+          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+          disabled={currentPage === totalPages}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+          title="Next"
+        >
+          Next <span className="opacity-60">›</span>
+        </button>
+      </div>
+
+      {/* Create / Edit modal */}
       {(isSuper || isAdmin) && (
         <FormModal
           title={editRow ? (isSuper ? 'Edit Customer' : 'Create Customer') : 'Create Customer'}
@@ -333,6 +414,16 @@ export default function CustomersPage() {
           onSubmit={handleSubmit}
         />
       )}
+
+      {/* Custom delete confirmation */}
+      <ConfirmDialog
+        open={confirm.open}
+        title="Delete Customer?"
+        message={confirm.row ? `This will permanently remove "${confirm.row.fullname}".` : ''}
+        confirmLabel="Delete"
+        onCancel={() => setConfirm({ open: false, row: null })}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }
