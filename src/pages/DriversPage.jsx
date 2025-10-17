@@ -1,6 +1,6 @@
 // src/pages/DriversPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, RefreshCw, Plus, Pencil, Trash2, X, BarChart3, Phone, ShieldAlert } from 'lucide-react';
+import { Search, RefreshCw, Plus, Pencil, Trash2, X, BarChart3, Phone, ShieldAlert, Mail, User as UserIcon, Lock } from 'lucide-react';
 import { api } from '../utils/api';
 
 // ---------- small helpers ----------
@@ -47,12 +47,27 @@ function ConfirmDialog({ open, title, message, onConfirm, onCancel }) {
   );
 }
 
-// ---------- Edit modal (superadmin edit only; creation disabled globally) ----------
-function EditModal({ open, initial = {}, users = [], onClose, onSubmit }) {
-  const [form, setForm] = useState(initial);
+// ---------- Create/Edit Driver (User-like) modal ----------
+function DriverUserModal({ open, initial = {}, onClose, onSubmit }) {
+  // initial may contain: { id(driverId)?, user_id, fullname, email, phoneNumber }
+  const isEdit = !!initial?.id;
+  const [form, setForm] = useState({
+    fullname: '',
+    email: '',
+    password: '',
+    phoneNumber: '',
+  });
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => setForm(initial || {}), [initial, open]);
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      fullname: initial.fullname ?? '',
+      email: initial.email ?? '',
+      password: '',
+      phoneNumber: initial.phoneNumber ?? '',
+    });
+  }, [open, initial]);
 
   if (!open) return null;
 
@@ -61,11 +76,7 @@ function EditModal({ open, initial = {}, users = [], onClose, onSubmit }) {
     if (busy) return;
     setBusy(true);
     try {
-      const payload = {
-        user_id: form.user_id,
-        phoneNumber: form.phoneNumber,
-      };
-      await onSubmit(payload);
+      await onSubmit({ ...form }, isEdit);
       onClose();
     } finally {
       setBusy(false);
@@ -77,46 +88,78 @@ function EditModal({ open, initial = {}, users = [], onClose, onSubmit }) {
       <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />
       <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[620px] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/30 bg-white/85 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
         <div className="flex items-center justify-between rounded-t-3xl bg-gradient-to-br from-slate-900 to-slate-800 px-5 py-4 text-white">
-          <div className="font-semibold">Edit Driver</div>
+          <div className="font-semibold">{isEdit ? 'Edit Driver (User & Phone)' : 'New Driver (Create User)'}</div>
           <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10"><X size={18} /></button>
         </div>
 
         <form onSubmit={submit} className="p-5 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5 sm:col-span-2">
-              <label className="text-xs font-medium text-slate-600">User *</label>
-              <select
-                required
-                value={form.user_id ?? ''}
-                onChange={(e) => setForm((p) => ({ ...p, user_id: Number(e.target.value) || '' }))}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-              >
-                <option value="" disabled>Select user…</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.fullname || u.email} {u.role ? `• ${u.role}` : ''}
-                  </option>
-                ))}
-              </select>
+              <label className="text-xs font-medium text-slate-600">Full name *</label>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5">
+                <UserIcon size={16} className="text-slate-400" />
+                <input
+                  required
+                  value={form.fullname}
+                  onChange={(e)=> setForm(p=>({ ...p, fullname: e.target.value }))}
+                  className="w-full bg-transparent outline-none"
+                  placeholder="John Doe"
+                />
+              </div>
             </div>
 
             <div className="space-y-1.5 sm:col-span-2">
+              <label className="text-xs font-medium text-slate-600">Email *</label>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5">
+                <Mail size={16} className="text-slate-400" />
+                <input
+                  required
+                  type="email"
+                  value={form.email}
+                  onChange={(e)=> setForm(p=>({ ...p, email: e.target.value }))}
+                  className="w-full bg-transparent outline-none"
+                  placeholder="name@example.com"
+                />
+              </div>
+            </div>
+
+            {!isEdit && (
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-medium text-slate-600">Password *</label>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5">
+                  <Lock size={16} className="text-slate-400" />
+                  <input
+                    required
+                    type="password"
+                    value={form.password}
+                    onChange={(e)=> setForm(p=>({ ...p, password: e.target.value }))}
+                    className="w-full bg-transparent outline-none"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5 sm:col-span-2">
               <label className="text-xs font-medium text-slate-600">Phone Number *</label>
-              <input
-                required
-                type="tel"
-                value={form.phoneNumber ?? ''}
-                onChange={(e) => setForm((p) => ({ ...p, phoneNumber: e.target.value }))}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-                placeholder="+977 98XXXXXXXX"
-              />
+              <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5">
+                <Phone size={16} className="text-slate-400" />
+                <input
+                  required
+                  type="tel"
+                  value={form.phoneNumber}
+                  onChange={(e)=> setForm(p=>({ ...p, phoneNumber: e.target.value }))}
+                  className="w-full bg-transparent outline-none"
+                  placeholder="+977 98XXXXXXXX"
+                />
+              </div>
             </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
             <button type="submit" disabled={busy} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60">
-              {busy ? 'Saving…' : 'Save Changes'}
+              {busy ? 'Saving…' : (isEdit ? 'Save Changes' : 'Create Driver')}
             </button>
           </div>
         </form>
@@ -189,18 +232,18 @@ function StatsModal({ open, rows, onRefresh, busy, onClose }) {
 export default function DriversPage() {
   // auth / role
   const [me, setMe] = useState(null);
-  const isSuper = me?.role === 'superadmin';
+  const role = me?.role || '';
+  const isSuper = role === 'superadmin';
+  const canManage = isSuper || role === 'admin'; // create/edit for Admin & Super Admin
 
   const [rows, setRows] = useState([]);
-  const [users, setUsers] = useState([]);
-
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
 
   const [q, setQ] = useState('');
-  const [editOpen, setEditOpen] = useState(false);
-  const [editRow, setEditRow] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editRow, setEditRow] = useState(null); // {id(driverId), user_id, fullname, email, phoneNumber}
 
   const [statsOpen, setStatsOpen] = useState(false);
   const [statsBusy, setStatsBusy] = useState(false);
@@ -220,11 +263,11 @@ export default function DriversPage() {
       const u = r?.data?.data?.user || r?.data?.user || r?.data;
       setMe(u || null);
     } catch {
-      // leave null -> read-only
+      setMe(null);
     }
   }
 
-  // load drivers (+ users only for superadmin)
+  // load drivers
   async function load() {
     setErr(''); setOk('');
     setLoading(true);
@@ -242,65 +285,78 @@ export default function DriversPage() {
     } finally {
       setLoading(false);
     }
-
-    if (isSuper) {
-      try {
-        const ur = await api.get('/users/');
-        const u = safeArr(getList(ur))
-          .map(x => ({ id: x.id, fullname: x.fullname, email: x.email, role: x.role }))
-          .sort((a, b) => byText(a.fullname || a.email, b.fullname || b.email));
-        setUsers(u);
-      } catch {
-        setUsers([]);
-      }
-    } else {
-      setUsers([]);
-    }
   }
 
   useEffect(() => { fetchMe(); }, []);
-  useEffect(() => { load(); }, [me]); // reload after we know the role
+  useEffect(() => { load(); }, [me]);
 
-  // edit only (creation disabled for everyone)
-  const openEdit = (row) => {
-    if (!isSuper) { setErr('Only Super Admin can edit drivers'); return; }
-    const user_id =
-      row?.user_id ??
-      row?.userId ??
-      row?.user?.id ??
-      row?.User?.id ?? '';
-    setEditRow({
-      id: row?.id,
-      user_id,
-      phoneNumber: row?.phoneNumber ?? row?.phone ?? '',
-    });
-    setEditOpen(true);
+  // open create
+  const openCreate = () => {
+    if (!canManage) { setErr('Only Admin / Super Admin can create drivers'); return; }
+    setEditRow(null);
+    setModalOpen(true);
   };
 
-  async function handleSubmit(payload) {
-    // creation blocked even for superadmin
-    if (!editRow?.id) {
-      setErr('Creating drivers is disabled on this page.');
-      return;
-    }
-    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
+  // open edit (collect user+driver fields)
+  const openEdit = (row) => {
+    if (!canManage) { setErr('Only Admin / Super Admin can edit drivers'); return; }
+    const user_id = row?.user_id ?? row?.userId ?? row?.user?.id ?? row?.User?.id ?? null;
+    const fullname = row?.user?.fullname || row?.User?.fullname || '';
+    const email = row?.user?.email || row?.User?.email || '';
+    const phoneNumber = row?.phoneNumber ?? row?.phone ?? '';
+    setEditRow({ id: row?.id, user_id, fullname, email, phoneNumber });
+    setModalOpen(true);
+  };
+
+  // create/edit submit
+  async function handleSubmit(form, isEdit) {
+    if (!canManage) { setErr('Only Admin / Super Admin can perform this action'); return; }
     try {
-      await api.put(`/drivers/${editRow.id}`, payload);
-      setOk('Driver updated');
-      setEditOpen(false);
+      setErr(''); setOk('');
+
+      if (isEdit && editRow?.id && editRow?.user_id) {
+        // Update USER
+        const userBody = {
+          fullname: form.fullname,
+          email: form.email,
+          ...(form.password ? { password: form.password } : {}),
+          role: 'driver', // keep role as driver
+        };
+        await api.put(`/users/${editRow.user_id}`, userBody);
+
+        // Update DRIVER
+        await api.put(`/drivers/${editRow.id}`, { user_id: editRow.user_id, phoneNumber: form.phoneNumber });
+
+        setOk('Driver updated');
+      } else {
+        // Create USER (role: driver)
+        const userRes = await api.post('/users/', {
+          fullname: form.fullname,
+          email: form.email,
+          password: form.password,
+          role: 'driver',
+        });
+        const newUserId = userRes?.data?.data?.id;
+
+        // Create DRIVER profile with phone
+        await api.post('/drivers/', { user_id: newUserId, phoneNumber: form.phoneNumber });
+
+        setOk('Driver created');
+      }
+
+      setModalOpen(false);
       setEditRow(null);
       await load();
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Save failed');
+      setErr(e?.response?.data?.message || e?.message || (isEdit ? 'Save failed' : 'Create failed'));
     }
   }
 
-  // open custom confirm
+  // delete (superadmin only)
   function askDelete(row) {
     if (!isSuper) { setErr('Only Super Admin can delete drivers'); return; }
     setConfirm({ open: true, row });
   }
-
   async function confirmDelete() {
     const row = confirm.row;
     setConfirm({ open: false, row: null });
@@ -354,7 +410,9 @@ export default function DriversPage() {
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Drivers</h1>
             <p className="text-sm text-slate-500">
-              View all delivery drivers and their stats. Creating drivers is disabled on this page.
+              {canManage
+                ? 'Create a new user (role: driver) with phone, or edit existing driver details. Delete is Super Admin only.'
+                : 'Browse delivery drivers and view delivery stats.'}
             </p>
           </div>
 
@@ -383,7 +441,14 @@ export default function DriversPage() {
               <RefreshCw size={16} /> Refresh
             </button>
 
-            {/* No "New Driver" button at all */}
+            {canManage && (
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
+              >
+                <Plus size={16} /> New Driver
+              </button>
+            )}
           </div>
         </div>
 
@@ -426,20 +491,24 @@ export default function DriversPage() {
                   </div>
                 </div>
 
-                {isSuper && (
+                {(canManage || isSuper) && (
                   <div className="mt-4 flex justify-end gap-2">
-                    <button
-                      onClick={() => openEdit(d)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                    >
-                      <Pencil size={16} /> Edit
-                    </button>
-                    <button
-                      onClick={() => askDelete(d)}
-                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                    >
-                      <Trash2 size={16} /> Delete
-                    </button>
+                    {canManage && (
+                      <button
+                        onClick={() => openEdit(d)}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                      >
+                        <Pencil size={16} /> Edit
+                      </button>
+                    )}
+                    {isSuper && (
+                      <button
+                        onClick={() => askDelete(d)}
+                        className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                      >
+                        <Trash2 size={16} /> Delete
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -491,11 +560,10 @@ export default function DriversPage() {
       </div>
 
       {/* modals */}
-      <EditModal
-        open={editOpen}
+      <DriverUserModal
+        open={modalOpen}
         initial={editRow || {}}
-        users={users}
-        onClose={() => { setEditOpen(false); setEditRow(null); }}
+        onClose={() => { setModalOpen(false); setEditRow(null); }}
         onSubmit={handleSubmit}
       />
 

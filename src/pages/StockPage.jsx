@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Boxes, ChevronRight, ChevronDown, Search, Plus, RefreshCw,
-  Pencil, Trash2, Building2, Layers
+  Pencil, Trash2, Building2, Layers, X
 } from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
@@ -63,28 +63,44 @@ const buildSelects = (rows=[]) => {
   };
 };
 
-// 🔒 Read-only mode (everyone)
-const CAN_MANAGE = false;
-
 export default function StockPage() {
+  // auth
+  const [me, setMe] = useState(null);
+  const isSuper = (me?.role || '') === 'superadmin';
+
+  // data
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
 
+  // filters + disclosure state
   const [q, setQ] = useState('');
   const [invFilter, setInvFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
   const [openKeys, setOpenKeys] = useState(new Set());
 
+  // modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [prefill, setPrefill] = useState(null);
 
+  // -------- auth
+  async function fetchMe() {
+    try {
+      const r = await api.get('/users/verify-token');
+      const u = r?.data?.data?.user || r?.data?.user || r?.data;
+      setMe(u || null);
+    } catch {
+      setMe(null);
+    }
+  }
+
+  // -------- data
   async function fetchAll() {
     try {
       setLoading(true); setErr(''); setOk('');
-      const r = await api.get('/stock/');
+      const r = await api.get('/stock/'); // aggregated list
       const list = Array.isArray(r?.data?.data) ? r.data.data : (r?.data || []);
       const normalized = list.map(normAgg);
       normalized.sort((a,b)=> String(a.productName||'').localeCompare(String(b.productName||'')));
@@ -95,8 +111,11 @@ export default function StockPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => { fetchMe(); }, []);
   useEffect(() => { fetchAll(); }, []);
 
+  // -------- derived
   const grouped = useMemo(() => {
     const map = new Map();
     rows.forEach(r => {
@@ -134,22 +153,20 @@ export default function StockPage() {
   }, [rows, q, invFilter, unitFilter]);
 
   const allOpen = grouped.length > 0 && grouped.every(g => openKeys.has(g.productId));
-  const toggleAll = () => {
-    if (allOpen) setOpenKeys(new Set());
-    else setOpenKeys(new Set(grouped.map(g => g.productId)));
-  };
+  const toggleAll = () => setOpenKeys(allOpen ? new Set() : new Set(grouped.map(g => g.productId)));
   const toggleOne = (pid) => {
     const s = new Set(openKeys);
     if (s.has(pid)) s.delete(pid); else s.add(pid);
     setOpenKeys(s);
   };
 
-  // (Management helpers exist but UI is hidden in read-only mode)
+  // selects for the modal
   const { productOptions, inventoryOptions, unitOptions } = useMemo(
     () => buildSelects(rows),
     [rows]
   );
 
+  // fields
   const CREATE_FIELDS = useMemo(() => ([
     { name: 'product_id',   type: 'select', label: 'Product',   required: true, options: productOptions, disabled: !!prefill?.product_id },
     { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: inventoryOptions, disabled: !!prefill?.inventory_id },
@@ -162,7 +179,66 @@ export default function StockPage() {
     { name: 'newQuantity', type: 'number', label: 'New quantity (final)', required: true, step: '0.01', min: '0' },
   ]), []);
 
+  // ------- CRUD (superadmin only) -------
+  function openCreate(pref = null) {
+    if (!isSuper) { setErr('Only Super Admin can create stock entries'); return; }
+    setPrefill(pref);
+    setEditRow(null);
+    setModalOpen(true);
+  }
+  function openEdit(row) {
+    if (!isSuper) { setErr('Only Super Admin can edit stock'); return; }
+    setEditRow(row);
+    setPrefill(null);
+    setModalOpen(true);
+  }
   function closeModal() { setPrefill(null); setEditRow(null); setModalOpen(false); }
+
+  async function handleSubmit(form) {
+    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
+    try {
+      setErr(''); setOk('');
+      if (editRow) {
+        // Adjust endpoint name if your API differs.
+        // Expects { product_id, inventory_id, unit_id, quantity }
+        await api.put('/stock/set-quantity', {
+          product_id: editRow.product_id,
+          inventory_id: editRow.inventory_id,
+          unit_id: editRow.unit_id,
+          quantity: Number(form.newQuantity),
+        });
+        setOk('Stock quantity updated');
+      } else {
+        // Typical create transaction endpoint
+        await api.post('/stock', {
+          product_id: Number(form.product_id),
+          inventory_id: Number(form.inventory_id),
+          unit_id: Number(form.unit_id),
+          stockQuantity: Number(form.stockQuantity),
+          notes: form.notes || undefined,
+        });
+        setOk('Stock added');
+      }
+      closeModal();
+      await fetchAll();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Save failed');
+    }
+  }
+
+  async function deleteStock(row) {
+    if (!isSuper) { setErr('Only Super Admin can delete stock'); return; }
+    if (!window.confirm(`Clear stock for ${row.productName} (${row.inventoryName}, ${row.unitName})?`)) return;
+    try {
+      setErr(''); setOk('');
+      // Adjust to your backend: a common pattern is DELETE /stock/:product_id/:inventory_id/:unit_id
+      await api.delete(`/stock/${row.product_id}/${row.inventory_id}/${row.unit_id}`);
+      setOk('Stock removed');
+      await fetchAll();
+    } catch (e) {
+      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -174,7 +250,7 @@ export default function StockPage() {
               <Boxes size={20}/> Stock
             </h1>
             <p className="text-sm text-slate-500">
-              View-only snapshot from <code>/stock</code>. Editing is disabled.
+              {isSuper ? 'Manage aggregate stock per Product • Inventory • Unit.' : 'View-only snapshot from /stock.'}
             </p>
           </div>
 
@@ -216,10 +292,9 @@ export default function StockPage() {
               <RefreshCw size={16}/> Refresh
             </button>
 
-            {/* New Stock hidden in read-only mode */}
-            {CAN_MANAGE && (
+            {isSuper && (
               <button
-                onClick={()=> {/* openCreate(null) */}}
+                onClick={()=> openCreate(null)}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
               >
                 <Plus size={16}/> New Stock
@@ -313,19 +388,19 @@ export default function StockPage() {
                     <div className="px-4 pb-4">
                       <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
                         {/* sub header */}
-                        <div className={`grid ${CAN_MANAGE ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500`}>
+                        <div className={`grid ${isSuper ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500`}>
                           <span>Inventory</span>
                           <span>Unit</span>
                           <span>Quantity</span>
                           <span>Updated</span>
-                          {CAN_MANAGE && <span className="text-right">Actions</span>}
+                          {isSuper && <span className="text-right">Actions</span>}
                         </div>
 
                         {/* sub rows */}
                         {(g.stocks.length === 0) ? (
                           <div className="px-3 py-3 text-sm text-slate-500">No stock rows for this product.</div>
                         ) : g.stocks.map(row => (
-                          <div key={row.key} className={`grid ${CAN_MANAGE ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 border-t border-slate-200 px-3 py-2.5`}>
+                          <div key={row.key} className={`grid ${isSuper ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 border-t border-slate-200 px-3 py-2.5`}>
                             <div className="min-w-0">
                               <div className="truncate text-sm text-slate-800">{row.inventoryName}</div>
                             </div>
@@ -333,17 +408,16 @@ export default function StockPage() {
                             <div className="text-sm font-semibold text-slate-900">{row.stockQuantity}</div>
                             <div className="text-xs text-slate-500">{prettyDateTime(row.updatedAt)}</div>
 
-                            {/* Actions hidden in read-only mode */}
-                            {CAN_MANAGE && (
+                            {isSuper && (
                               <div className="flex justify-end gap-2">
                                 <button
-                                  onClick={()=> {/* openEdit(row) */}}
+                                  onClick={()=> openEdit(row)}
                                   className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
                                 >
                                   <Pencil size={14}/> Edit
                                 </button>
                                 <button
-                                  onClick={()=> {/* deleteStock(row) */}}
+                                  onClick={()=> deleteStock(row)}
                                   className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
                                 >
                                   <Trash2 size={14}/> Delete
@@ -354,11 +428,10 @@ export default function StockPage() {
                         ))}
                       </div>
 
-                      {/* Add stock button hidden in read-only mode */}
-                      {CAN_MANAGE && (
+                      {isSuper && (
                         <div className="mt-3 flex justify-end">
                           <button
-                            onClick={()=> {/* openCreate({ product_id: g.productId }) */}}
+                            onClick={()=> openCreate({ product_id: g.productId })}
                             className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                           >
                             <Plus size={16}/> Add stock for “{g.productName}”
@@ -378,8 +451,8 @@ export default function StockPage() {
         )}
       </div>
 
-      {/* Modal is not rendered in read-only mode */}
-      {CAN_MANAGE && (
+      {/* Modal (only for superadmin) */}
+      {isSuper && (
         <FormModal
           title={editRow ? 'Edit Stock' : 'New Stock Transaction'}
           open={modalOpen}
@@ -396,7 +469,7 @@ export default function StockPage() {
                     }
                   : {})
           }
-          onSubmit={() => {}}
+          onSubmit={handleSubmit}
         />
       )}
     </div>

@@ -129,7 +129,7 @@ export default function CategoriesPage() {
   ]);
 
   // pagination
-  const PER_PAGE = 5;
+  const PER_PAGE = 10;
   const [page, setPage] = useState(1);
 
   // fetch me

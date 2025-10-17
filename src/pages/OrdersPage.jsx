@@ -160,7 +160,7 @@ export default function OrdersPage() {
 
   // pagination
   const [page, setPage] = useState(1);
-  const perPage = 6;
+  const perPage = 10;
 
   // confirm dialog
   const [confirmOpen, setConfirmOpen] = useState(false);

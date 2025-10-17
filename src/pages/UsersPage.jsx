@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   User as UserIcon, Search, Plus, RefreshCw, Pencil, Trash2, Building2, ShieldAlert,
-  ChevronLeft, ChevronRight, CheckCircle2, XCircle, X as XIcon, Phone
+  ChevronLeft, ChevronRight, CheckCircle2, XCircle, X as XIcon
 } from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
@@ -13,7 +13,7 @@ const prettyDate = (d) => {
   const dt = new Date(d);
   return isNaN(dt) ? '—' : dt.toLocaleString();
 };
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 10; // backend sends 10 per page
 
 /* ---------- simple modal shells ---------- */
 function Curtain({ onClose }) {
@@ -29,9 +29,7 @@ function Shell({ children, className = '' }) {
 
 /* ---------- Custom Confirm/Delete Modal ---------- */
 function ConfirmDeleteModal({ open, user, status, message, onCancel, onConfirm }) {
-  // status: 'confirm' | 'success' | 'error'
   if (!open) return null;
-
   const isConfirm = status === 'confirm';
   const isSuccess = status === 'success';
   const isError   = status === 'error';
@@ -55,9 +53,7 @@ function ConfirmDeleteModal({ open, user, status, message, onCancel, onConfirm }
               <div className="text-slate-800">
                 You are about to delete user <span className="font-semibold">{user?.fullname}</span>.
               </div>
-              <div className="mt-1 text-sm text-slate-500">
-                This action cannot be undone.
-              </div>
+              <div className="mt-1 text-sm text-slate-500">This action cannot be undone.</div>
             </>
           )}
 
@@ -98,13 +94,12 @@ function ConfirmDeleteModal({ open, user, status, message, onCancel, onConfirm }
   );
 }
 
-/* ---------- Pagination Control ---------- */
+/* ---------- Pagination Control (same look as other pages) ---------- */
 function Pager({ page, pages, onPage }) {
   if (pages <= 1) return null;
   const canPrev = page > 1;
   const canNext = page < pages;
 
-  // show a compact window e.g., 1 … 3 4 [5] 6 7 … 12
   const windowSize = 1;
   const nums = [];
   for (let i = 1; i <= pages; i++) {
@@ -168,15 +163,12 @@ export default function UsersPage() {
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
 
   /* ---------- modals ---------- */
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
-  const [createRole, setCreateRole] = useState('driver'); // used only for create
-  const [editRole, setEditRole] = useState('driver');     // used only for edit
-
-  const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
-  const [pendingCreate, setPendingCreate] = useState(null); // stores create step1 payload
 
   // custom confirm delete
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -202,7 +194,8 @@ export default function UsersPage() {
     }
   }
 
-  async function fetchAll() {
+  // 🔁 fetch inventories (labels) + paged users (server pagination)
+  async function fetchPage(p = 1) {
     try {
       setLoading(true);
       setErr(''); setOk('');
@@ -214,13 +207,21 @@ export default function UsersPage() {
       setInventories(invData);
 
       if (isSuper) {
-        // only superadmin can see/manage users
-        const uRes = await api.get('/users/');
-        const usersData = Array.isArray(uRes?.data?.data) ? uRes.data.data : (uRes?.data || []);
+        // server-side paginated users
+        const uRes = await api.get('/users/', { params: { page: p, limit: PAGE_SIZE } });
+        const payload = uRes?.data || {};
+        const usersData = Array.isArray(payload.data) ? payload.data : (payload || []);
         usersData.sort((a, b) => String(a.fullname || '').localeCompare(String(b.fullname || '')));
         setUsers(usersData);
+
+        const meta = payload.pagination || {};
+        setTotalPages(Number(meta.totalPages) || 1);
+        setTotalCount(Number(meta.total) || usersData.length);
+        setPage(Number(meta.page) || p);
       } else {
         setUsers([]);
+        setTotalPages(1);
+        setTotalCount(0);
       }
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Error fetching users');
@@ -230,7 +231,8 @@ export default function UsersPage() {
   }
 
   useEffect(() => { fetchMe(); }, []);
-  useEffect(() => { if (me) fetchAll(); }, [me]);
+  useEffect(() => { if (me) fetchPage(page); }, [me]); // initial load when role known
+  useEffect(() => { if (isSuper) fetchPage(page); }, [page]); // go to page
 
   /* ---------- options ---------- */
   const allInvOptions = useMemo(
@@ -238,24 +240,7 @@ export default function UsersPage() {
     [inventories]
   );
 
-  const visibleInvOptions = useMemo(() => {
-    if (isSuper) return allInvOptions;
-    const allowed = new Set(myManagedInvs.map((i) => String(i.id)));
-    return allInvOptions.filter(o => allowed.has(String(o.value)));
-  }, [allInvOptions, isSuper, myManagedInvs]);
-
-  const editInvOptions = useMemo(() => {
-    if (!editRow) return visibleInvOptions;
-    const owned = new Set(
-      (editRow.managedItems || [])
-        .map(m => m?.inventory?.id)
-        .filter(Boolean)
-        .map(String)
-    );
-    return visibleInvOptions.filter(o => !owned.has(String(o.value)));
-  }, [visibleInvOptions, editRow]);
-
-  /* ---------- FIELD DEFINITIONS ---------- */
+  /* ---------- FIELD DEFINITIONS (driver removed) ---------- */
   const CREATE_FIELDS = useMemo(() => ([
     { name: 'fullname', type: 'text', label: 'Full name', required: true },
     { name: 'email', type: 'email', label: 'Email', required: true },
@@ -265,62 +250,50 @@ export default function UsersPage() {
       type: 'select',
       label: 'Role',
       required: true,
+      // 🚫 No driver option here
       options: [
-        { value: 'driver',     label: 'Driver' },
         { value: 'admin',      label: 'Admin' },
         { value: 'superadmin', label: 'Super Admin' },
       ],
-      onChange: (e) => setCreateRole(e.target.value),
     },
-    // phone number ONLY when creating a driver
-    ...(createRole === 'driver'
-      ? [{ name: 'phoneNumber', type: 'tel', label: 'Phone Number (Driver)', required: true, icon: Phone }]
-      : []),
-  ]), [createRole]);
-
-  const EDIT_FIELDS = useMemo(() => {
-    const base = [
-      { name: 'fullname', type: 'text', label: 'Full name' },
-      { name: 'email', type: 'email', label: 'Email' },
-      { name: 'password', type: 'password', label: 'New password (optional)' },
-      {
-        name: 'role', type: 'select', label: 'Role',
-        options: [
-          { value: 'driver',     label: 'Driver' },
-          { value: 'admin',      label: 'Admin' },
-          { value: 'superadmin', label: 'Super Admin' },
-        ],
-        onChange: (e) => setEditRole(e.target.value),
-        helper: 'If role is Admin, you can assign a managed inventory below.',
-      },
-    ];
-    if (editRole === 'admin') {
-      base.push({
-        name: 'inventoryId',
-        type: 'select',
-        label: 'Managed Inventory (Admin only)',
-        required: false,
-        options: [
-          { value: '', label: '— No change —' },
-          ...editInvOptions,
-          { value: 'null', label: 'Remove assignment' },
-        ],
-        helper: 'Pick a new inventory for this Admin, or “Remove assignment”.',
-      });
-    }
-    return base;
-  }, [editRole, editInvOptions]);
-
-  const INVENTORY_FIELDS = useMemo(() => ([
     {
       name: 'inventoryId',
       type: 'select',
-      label: 'Select Inventory to manage',
-      required: true,
-      options: visibleInvOptions,
-      helper: 'This Admin will be assigned to manage this inventory.',
+      label: 'Managed Inventory (only for Admin)',
+      required: false,
+      options: [{ value: '', label: '— Optional —' }, ...allInvOptions],
+      helper: 'If role is Admin, you may assign an inventory to manage.',
     },
-  ]), [visibleInvOptions]);
+  ]), [allInvOptions]);
+
+  const EDIT_FIELDS = useMemo(() => ([
+    { name: 'fullname', type: 'text', label: 'Full name' },
+    { name: 'email', type: 'email', label: 'Email' },
+    { name: 'password', type: 'password', label: 'New password (optional)' },
+    {
+      name: 'role',
+      type: 'select',
+      label: 'Role',
+      options: [
+        // 🚫 No driver option here either
+        { value: 'admin',      label: 'Admin' },
+        { value: 'superadmin', label: 'Super Admin' },
+      ],
+      helper: 'If role is Admin, you can assign a managed inventory below.',
+    },
+    {
+      name: 'inventoryId',
+      type: 'select',
+      label: 'Managed Inventory (Admin only)',
+      required: false,
+      options: [
+        { value: '', label: '— No change —' },
+        ...allInvOptions,
+        { value: 'null', label: 'Remove assignment' },
+      ],
+      helper: 'Pick a new inventory for this Admin, or “Remove assignment”.',
+    },
+  ]), [allInvOptions]);
 
   /* ---------- utilities ---------- */
   function sanitize(fields, payload) {
@@ -350,18 +323,16 @@ export default function UsersPage() {
   async function performDeleteUser(user) {
     try {
       setConfirmStatus('confirm'); setConfirmMsg('');
-      // call API
       await api.delete(`/users/${user.id}`);
       setConfirmStatus('success');
       setConfirmMsg('The user has been removed.');
-      await fetchAll();
+      await fetchPage(page); // refresh current page
     } catch (e) {
       setConfirmStatus('error');
       setConfirmMsg(e?.response?.data?.message || e?.message || 'Delete failed');
     }
   }
 
-  // open confirm for user
   function askDeleteUser(u) {
     setConfirmTarget(u);
     setConfirmStatus('confirm');
@@ -380,71 +351,29 @@ export default function UsersPage() {
         setOk('User updated');
         setEditRow(null);
         setModalOpen(false);
-        await fetchAll();
+        await fetchPage(page);
         return;
       }
 
-      // CREATE flow (step 1)
+      // CREATE (only admin/superadmin)
       const body = sanitize(CREATE_FIELDS, form);
-      if (String(body.role) === 'admin') {
-        setPendingCreate(body);
-        setModalOpen(false);
-        setInventoryModalOpen(true);
-        return;
-      }
-
-      // DRIVER or SUPERADMIN create immediately
-      // If DRIVER, we also create a Driver row with phoneNumber after User is created
-      const phoneNumber = body.phoneNumber;
-      const payload = { fullname: body.fullname, email: body.email, password: body.password, role: body.role || 'driver' };
-      const r = await createUser(payload);
-      const createdId = r?.data?.data?.id;
-
-      if (body.role === 'driver' && createdId && phoneNumber) {
-        try {
-          await api.post('/drivers/', { user_id: createdId, phoneNumber });
-        } catch (e) {
-          // not fatal for user creation; show inline note
-          setErr(e?.response?.data?.message || e?.message || 'Driver profile creation failed, but user was created.');
-        }
-      }
-
+      await createUser(body);
       setOk('User created');
       setModalOpen(false);
-      await fetchAll();
+      // after create, reload page 1 to show the newest at top (backend orders DESC)
+      setPage(1);
+      await fetchPage(1);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Action failed');
     }
   }
 
-  // Step 2: assign inventory for Admin
-  async function handleAssignInventory(form) {
-    try {
-      if (!pendingCreate) { setInventoryModalOpen(false); return; }
-      const invForm = sanitize(INVENTORY_FIELDS, form);
-      const inv = invForm.inventoryId;
-      if (inv === undefined || inv === null || Number.isNaN(Number(inv))) {
-        setErr('Please select an inventory to assign to the Admin.');
-        return;
-      }
-      const finalBody = { ...pendingCreate, inventoryId: Number(inv) };
-      setErr(''); setOk('');
-      await createUser(finalBody);
-      setOk('User created');
-      setPendingCreate(null);
-      setInventoryModalOpen(false);
-      await fetchAll();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Action failed');
-    }
-  }
-
-  // modal open/close helpers
-  function openCreate() { setCreateRole('driver'); setEditRow(null); setModalOpen(true); }
-  function openEdit(row) { setEditRow(row); setEditRole(row?.role || 'driver'); setModalOpen(true); }
+  // modal helpers
+  function openCreate() { setEditRow(null); setModalOpen(true); }
+  function openEdit(row) { setEditRow(row); setModalOpen(true); }
   function closeModal() { setEditRow(null); setModalOpen(false); }
 
-  /* ---------- filtering & paging ---------- */
+  /* ---------- client-side filter (applied to current page rows) ---------- */
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return (users || []).filter(u => {
@@ -459,14 +388,12 @@ export default function UsersPage() {
     });
   }, [users, q, roleFilter]);
 
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageClamped = Math.min(page, pages);
-  const sliced = useMemo(() => {
-    const start = (pageClamped - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, pageClamped]);
+  // Note: pagination is server-driven; we still show backend total pages.
+  const pages = totalPages;
+  const showingCount = filtered.length;
 
-  useEffect(() => { setPage(1); }, [q, roleFilter]); // reset to first page when filters change
+  // reset to page 1 when search/filter changes so user sees relevant results
+  useEffect(() => { if (isSuper) setPage(1); }, [q, roleFilter, isSuper]);
 
   /* ---------- RENDER ---------- */
   return (
@@ -479,7 +406,7 @@ export default function UsersPage() {
             </h1>
             <p className="text-sm text-slate-500">
               {isSuper
-                ? <>Connected to <code>/users</code>. Create, edit, delete and (for admins) assign a managed inventory. Drivers can include a phone number.</>
+                ? <>Connected to <code>/users</code> with server pagination (10 per page). Create, edit, delete; assign inventory to Admins.</>
                 : <>Access limited. As an Admin you cannot manage users; you can view your assigned inventories below.</>}
             </p>
           </div>
@@ -508,7 +435,7 @@ export default function UsersPage() {
               </select>
 
               <button
-                onClick={fetchAll}
+                onClick={()=> fetchPage(page)}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
               >
                 <RefreshCw size={16}/> Refresh
@@ -553,7 +480,7 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Superadmin table (with pagination) */}
+      {/* Superadmin table (server-paginated) */}
       {isSuper && (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur">
           <div className="grid grid-cols-[1.6fr_1.2fr_.7fr_.9fr_.7fr] items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -573,7 +500,7 @@ export default function UsersPage() {
           ) : (
             <>
               <ul className="divide-y divide-slate-200">
-                {sliced.map(u => (
+                {filtered.map(u => (
                   <li key={u.id} className="grid grid-cols-[1.6fr_1.2fr_.7fr_.9fr_.7fr] items-center gap-3 px-4 py-3">
                     <div className="min-w-0">
                       <div className="truncate font-medium text-slate-900">{u.fullname}</div>
@@ -602,23 +529,29 @@ export default function UsersPage() {
                     </div>
                   </li>
                 ))}
-                {sliced.length === 0 && !loading && (
-                  <li className="px-4 py-6 text-center text-slate-500">No users found.</li>
+                {filtered.length === 0 && !loading && (
+                  <li className="px-4 py-6 text-center text-slate-500">No users found on this page.</li>
                 )}
               </ul>
 
-              <div className="px-4 pb-3">
-                <Pager page={pageClamped} pages={pages} onPage={(p)=> setPage(Math.max(1, Math.min(pages, p)))} />
+              <div className="flex items-center justify-between px-4 pb-3 text-xs text-slate-500">
+                <div>
+                  Showing {filtered.length} of {Math.min(PAGE_SIZE, users.length)} on this page • Total users: {totalCount}
+                </div>
+                <Pager
+                  page={page}
+                  pages={pages}
+                  onPage={(p)=> setPage(Math.max(1, Math.min(pages, p)))}
+                />
               </div>
             </>
           )}
         </div>
       )}
 
-      {/* Modal (superadmin only) - Step 1: Create/Edit */}
+      {/* Modal (superadmin only) */}
       {isSuper && (
         <FormModal
-          key={editRow ? `edit-${editRole}-${editRow.id}` : `create-${createRole}`} // force remount on role change
           title={editRow ? `Edit User: ${editRow.fullname}` : 'New User'}
           open={modalOpen}
           onClose={closeModal}
@@ -626,21 +559,9 @@ export default function UsersPage() {
           initial={
             editRow
               ? { fullname: editRow.fullname, email: editRow.email, role: editRow.role }
-              : { role: 'driver' } // default create role
+              : { role: 'admin' } // default role is Admin; driver removed
           }
           onSubmit={handleSubmit}
-        />
-      )}
-
-      {/* Modal (superadmin only) - Step 2: Assign Inventory for Admin */}
-      {isSuper && (
-        <FormModal
-          title="Assign Inventory to Admin"
-          open={inventoryModalOpen}
-          onClose={() => { setInventoryModalOpen(false); setPendingCreate(null); }}
-          fields={INVENTORY_FIELDS}
-          initial={{}}
-          onSubmit={handleAssignInventory}
         />
       )}
 
