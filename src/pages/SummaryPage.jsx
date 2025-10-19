@@ -43,7 +43,6 @@ export default function Summary() {
   async function fetchSummary(p = period, inv = '') {
     try {
       setLoading(true); setErr('');
-      // Change to '/api/summary' if your backend is mounted under /api
       const res = await api.get('/summary', { params: { period: p, ...(inv ? { inventoryId: inv } : {}) } });
       setData(res?.data?.data || null);
     } catch (e) {
@@ -123,7 +122,7 @@ export default function Summary() {
   ), [inventories]);
 
   /* --------------------------- Receipt (data-driven) ------------------------ */
-  function buildReceiptHTML() {
+  function buildReceiptHTML(autoPrint = true) {
     const kpiRows = [
       ['Orders', nfInt.format(kpis.orders)],
       ['Items Sold', nfInt.format(kpis.itemsSold)],
@@ -282,122 +281,21 @@ export default function Summary() {
 
   ${perInventoryBlocks}
 </div>
-<script>window.onload = () => { window.print(); };</script>
+${autoPrint ? '<script>window.onload = () => { try { window.print(); } catch(e){} };</script>' : ''}
 </body>
 </html>`;
   }
 
   function openPreview() { setPreviewOpen(true); }
+
   function printPreview() {
+    const html = buildReceiptHTML(true);
     const w = window.open('', '_blank');
     if (!w) return;
-    const html = buildReceiptHTML();
     w.document.open();
     w.document.write(html);
     w.document.close();
   }
-
-  /* ----------------------------- Excel export (commented) ------------------- */
-  // NOTE: You asked to keep the Excel export code but comment it out.
-  // To enable later: remove the block comments and `npm i xlsx`
-  //
-  // async function exportOneExcel() {
-  //   let XLSX;
-  //   try {
-  //     XLSX = await import('xlsx'); // make sure: npm i xlsx
-  //   } catch (e) {
-  //     alert('Excel export requires "xlsx". Run: npm i xlsx');
-  //     console.error(e);
-  //     return;
-  //   }
-  //
-  //   const rows = [];
-  //   const push = (r) => rows.push(r);
-  //   const blank = () => rows.push([]);
-  //
-  //   // Header/meta
-  //   push(['Inventory Console — Summary']);
-  //   push([`Period: ${period}`, `Range: ${rangeStr}`, invFilter ? `Inventory ID: ${invFilter}` : '', `Generated: ${nowStr}`]);
-  //   blank();
-  //
-  //   // KPIs
-  //   push(['KPIs']);
-  //   push(['Metric', 'Value']);
-  //   push(['Orders', kpis.orders]);
-  //   push(['Items Sold', kpis.itemsSold]);
-  //   push(['Revenue', Number(kpis.revenue)]);
-  //   push(['Stock Quantity', kpis.stockQty]);
-  //   push(['Stock Items', kpis.stockItems]);
-  //   push(['Inventories', inventories.length]);
-  //   blank();
-  //
-  //   // Revenue by Inventory
-  //   push(['Revenue by Inventory']);
-  //   push(['Inventory ID', 'Inventory', 'Orders', 'Revenue']);
-  //   revenueByInventory.forEach(r => push([r.inventoryId, r.name, r.orders, Number(r.revenue)]));
-  //   push(['Total', '', kpis.orders, Number(kpis.revenue)]);
-  //   blank();
-  //
-  //   // Top 10 by Revenue
-  //   push(['Top 10 Products by Revenue']);
-  //   push(['#', 'Product ID', 'Product', 'Orders', 'Items Sold', 'Revenue']);
-  //   productAgg.byRevenue.forEach((r, idx) => push([idx+1, r.productId, r.name, r.orders, r.qty, Number(r.revenue)]));
-  //   blank();
-  //
-  //   // Top 10 by Items Sold
-  //   push(['Top 10 Products by Items Sold']);
-  //   push(['#', 'Product ID', 'Product', 'Items Sold', 'Orders', 'Revenue']);
-  //   productAgg.byQty.forEach((r, idx) => push([idx+1, r.productId, r.name, r.qty, r.orders, Number(r.revenue)]));
-  //   blank();
-  //
-  //   // Stock by Inventory
-  //   push(['Stock by Inventory']);
-  //   push(['Inventory ID', 'Inventory', 'Stock Quantity']);
-  //   stockByInventory.forEach(r => push([r.inventoryId, r.name, r.qty]));
-  //   push(['Total', '', kpis.stockQty]);
-  //   blank();
-  //
-  //   // Per-inventory detailed sections
-  //   inventories.forEach(inv => {
-  //     push([inv.inventoryName]);
-  //     // Sales by Product
-  //     push(['Sales by Product']);
-  //     push(['Product ID', 'Product', 'Unit', 'Quantity', 'Orders', 'Revenue']);
-  //     (inv.sales?.byProduct || []).forEach(s => {
-  //       push([
-  //         s.productId,
-  //         s.productName,
-  //         s?.unit?.name || '',
-  //         Number(s.quantitySold || 0),
-  //         Number(s.orders || 0),
-  //         Number(s.revenue || 0),
-  //       ]);
-  //     });
-  //     push(['Total (Sales)', '', '', Number(inv.sales?.totals?.quantity || 0), Number(inv.sales?.totals?.orders || 0), Number(inv.sales?.totals?.revenue || 0)]);
-  //     blank();
-  //
-  //     // Stock by Product
-  //     push(['Stock by Product']);
-  //     push(['Product ID', 'Product', 'Unit', 'Stock Quantity']);
-  //     (inv.stock?.byProduct || []).forEach(s => {
-  //       push([
-  //         s.productId,
-  //         s.productName,
-  //         s?.unit?.name || '',
-  //         Number(s.stockQuantity || 0),
-  //       ]);
-  //     });
-  //     push(['Total (Stock)', '', '', Number(inv.stock?.totals?.totalQuantity || 0)]);
-  //     blank();
-  //     blank();
-  //   });
-  //
-  //   const ws = XLSX.utils.aoa_to_sheet(rows);
-  //   ws['!cols'] = [{ wch: 30 }, { wch: 24 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }];
-  //   const wb = XLSX.utils.book_new();
-  //   XLSX.utils.book_append_sheet(wb, ws, 'Summary');
-  //   XLSX.writeFile(wb, `summary_${period}.xlsx`);
-  // }
 
   // Keep Download icon referenced (so ESLint won't flag unused import when export is commented)
   // eslint-disable-next-line no-unused-vars
@@ -451,13 +349,6 @@ export default function Summary() {
             >
               <RefreshCw size={16}/> Refresh
             </button>
-
-            {/* Excel Export button intentionally commented out (kept for later use)
-            <button onClick={exportOneExcel}
-              className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2.5 text-sm text-indigo-700 hover:bg-indigo-100 font-medium">
-              <Download size={16}/> Export (Excel)
-            </button>
-            */}
 
             <button
               onClick={openPreview}
@@ -602,7 +493,7 @@ export default function Summary() {
         </div>
       )}
 
-      {/* ======= Receipt Preview ======= */}
+      {/* ======= Receipt Preview (FULL receipt via iframe) ======= */}
       {previewOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-5xl rounded-2xl bg-white shadow-2xl">
@@ -630,9 +521,11 @@ export default function Summary() {
             </div>
 
             <div className="max-h-[70vh] overflow-y-auto p-4" ref={previewRef}>
-              <div className="text-sm text-slate-700">
-                Preview header only. Use <b>Print / Save PDF</b> for the full receipt.
-              </div>
+              <iframe
+                title="Summary Receipt Preview"
+                srcDoc={buildReceiptHTML(false)}
+                className="w-full h-[70vh] border rounded-lg"
+              />
             </div>
           </div>
         </div>

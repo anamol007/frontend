@@ -4,7 +4,7 @@ import { api } from "../utils/api";
 import {
   Search, Plus, RefreshCw, Package, User2, Building2,
   Banknote, CalendarClock, Pencil, Trash2, BadgeCheck,
-  ChevronLeft, ChevronRight, X
+  ChevronLeft, ChevronRight, X, FileText, Printer
 } from "lucide-react";
 import FormModal from "../components/FormModal";
 
@@ -125,6 +125,238 @@ function Pagination({ total, page, perPage, onPage }) {
   );
 }
 
+/* -------------------- Receipt Preview (no company block) -------------------- */
+function ReceiptModal({ open, order, onClose, onPrint }) {
+  if (!open || !order) return null;
+
+  const id = order.id;
+  const when = order.orderDate || order.createdAt;
+  const cust = order.customer || {};
+  const prod = order.product || {};
+  const inv  = order.inventory || {};
+  const unit = order.unit || {};
+  const qty = Number(order.quantity ?? 0);
+  const total = Number(order.totalAmount ?? 0);
+  const pay = order.paymentMethod || "—";
+  const status = order.status || "pending";
+  const unitPrice = qty > 0 ? total / qty : 0;
+
+  return (
+    <div className="fixed inset-0 z-[95]">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[min(820px,94vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-white/40 bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b bg-slate-900 px-5 py-4 text-white">
+          <div className="font-semibold">Order Receipt</div>
+          <div className="flex items-center gap-2">
+            <button onClick={onPrint} className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20">
+              <span className="inline-flex items-center gap-2"><Printer size={16}/> Print</span>
+            </button>
+            <button onClick={onClose} className="rounded-lg bg-white/10 p-2 hover:bg-white/20">
+              <X size={16}/>
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-6">
+          {/* Meta (no company block) */}
+          <div className="flex justify-end">
+            <div className="text-right">
+              <div className="text-xs uppercase tracking-wide text-slate-500">Receipt</div>
+              <div className="text-lg font-semibold text-slate-900">#{id}</div>
+              <div className="text-sm text-slate-600">{formatPrettyDate(when)}</div>
+              <div className="mt-1 inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-xs">
+                <BadgeCheck size={14}/><span className="capitalize">{status}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Parties */}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bill To</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">{cust.fullname || "—"}</div>
+              {cust.email && <div className="text-xs text-slate-600">{cust.email}</div>}
+              {cust.phoneNumber && <div className="text-xs text-slate-600">{cust.phoneNumber}</div>}
+              {cust.address && <div className="text-xs text-slate-600">{cust.address}</div>}
+            </div>
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Fulfilled From</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">{inv.inventoryName || "—"}</div>
+              {inv.address && <div className="text-xs text-slate-600">{inv.address}</div>}
+              {inv.contactNumber && <div className="text-xs text-slate-600">{inv.contactNumber}</div>}
+            </div>
+          </div>
+
+          {/* Line item */}
+          <div className="mt-6 overflow-hidden rounded-xl border">
+            <div className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <span>Product</span>
+              <span className="text-right">Qty</span>
+              <span className="text-right">Unit Price</span>
+              <span className="text-right">Amount</span>
+            </div>
+            <div className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center border-t px-3 py-3 text-sm">
+              <div className="min-w-0">
+                <div className="truncate font-medium text-slate-900">{prod.productName || `Product #${order.productId}`}</div>
+                <div className="text-xs text-slate-500">{unit.name ? `Unit: ${unit.name}` : ""}</div>
+              </div>
+              <div className="text-right tabular-nums">{qty}</div>
+              <div className="text-right tabular-nums">{unitPrice.toFixed(2)}</div>
+              <div className="text-right font-semibold tabular-nums">{total.toFixed(2)}</div>
+            </div>
+          </div>
+
+          {/* Summary */}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment</div>
+              <div className="mt-1 text-sm text-slate-800 capitalize">{pay}</div>
+              {order.notes && (
+                <>
+                  <div className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</div>
+                  <div className="mt-1 text-sm text-slate-700">{order.notes}</div>
+                </>
+              )}
+            </div>
+            <div className="rounded-xl border bg-white p-4">
+              <div className="flex items-center justify-between text-sm">
+                <div className="text-slate-700">Subtotal</div>
+                <div className="font-medium tabular-nums">{total.toFixed(2)}</div>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-sm">
+                <div className="text-slate-700">Tax</div>
+                <div className="tabular-nums">0.00</div>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-sm">
+                <div className="text-slate-700">Discount</div>
+                <div className="tabular-nums">0.00</div>
+              </div>
+              <div className="mt-3 flex items-center justify-between text-base font-semibold">
+                <div className="text-slate-900">Total</div>
+                <div className="tabular-nums">{total.toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 border-t pt-3 text-center text-xs text-slate-500">
+            Thank you for your business!
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------- Build printable HTML with inline CSS -------------------- */
+function buildPrintableReceiptHTML(order) {
+  const id = order.id;
+  const when = formatPrettyDate(order.orderDate || order.createdAt);
+  const cust = order.customer || {};
+  const prod = order.product || {};
+  const inv  = order.inventory || {};
+  const unit = order.unit || {};
+  const qty = Number(order.quantity ?? 0);
+  const total = Number(order.totalAmount ?? 0);
+  const unitPrice = qty > 0 ? total / qty : 0;
+  const status = (order.status || "pending").toUpperCase();
+  const pay = order.paymentMethod || "—";
+
+  const css = `
+    *{box-sizing:border-box} body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;color:#0f172a}
+    .wrap{padding:28px}
+    .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+    .right{text-align:right}
+    .muted{font-size:12px;color:#64748b;letter-spacing:.06em;text-transform:uppercase}
+    .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid #e2e8f0;border-radius:8px;padding:4px 8px;font-size:12px;margin-top:6px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+    .card{border:1px solid #e2e8f0;border-radius:12px;padding:12px}
+    .title{font-weight:700;font-size:14px}
+    .small{font-size:12px;color:#475569}
+    .table{border:1px solid #e2e8f0;border-radius:12px;margin-top:18px;overflow:hidden}
+    .thead{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;background:#f8fafc;padding:10px 12px;font-size:12px;font-weight:700;color:#475569}
+    .row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:12px;border-top:1px solid #e2e8f0;font-size:14px}
+    .rightCell{text-align:right}
+    .summary{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+    .line{display:flex;justify-content:space-between;margin:6px 0;font-size:14px}
+    .total{font-weight:800;font-size:16px;margin-top:8px}
+    @page{size:auto;margin:14mm}
+  `;
+  const html = `
+  <!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Receipt #${id}</title>
+      <style>${css}</style>
+    </head>
+    <body>
+      <div class="wrap">
+        <div class="top">
+          <div></div>
+          <div class="right">
+            <div class="muted">RECEIPT</div>
+            <div class="title">#${id}</div>
+            <div class="small">${when}</div>
+            <div class="badge">${status}</div>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="card">
+            <div class="muted">BILL TO</div>
+            <div class="title">${cust.fullname || "—"}</div>
+            ${cust.email ? `<div class="small">${cust.email}</div>` : ""}
+            ${cust.phoneNumber ? `<div class="small">${cust.phoneNumber}</div>` : ""}
+            ${cust.address ? `<div class="small">${cust.address}</div>` : ""}
+          </div>
+          <div class="card">
+            <div class="muted">FULFILLED FROM</div>
+            <div class="title">${inv.inventoryName || "—"}</div>
+            ${inv.address ? `<div class="small">${inv.address}</div>` : ""}
+            ${inv.contactNumber ? `<div class="small">${inv.contactNumber}</div>` : ""}
+          </div>
+        </div>
+
+        <div class="table">
+          <div class="thead">
+            <div>Product</div><div class="rightCell">Qty</div><div class="rightCell">Unit Price</div><div class="rightCell">Amount</div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="title">${prod.productName || `Product #${order.productId}`}</div>
+              <div class="small">${unit.name ? `Unit: ${unit.name}` : ""}</div>
+            </div>
+            <div class="rightCell">${qty}</div>
+            <div class="rightCell">${unitPrice.toFixed(2)}</div>
+            <div class="rightCell"><strong>${total.toFixed(2)}</strong></div>
+          </div>
+        </div>
+
+        <div class="summary">
+          <div class="card">
+            <div class="muted">PAYMENT</div>
+            <div class="title" style="font-size:14px;font-weight:600;text-transform:capitalize">${pay}</div>
+            ${order.notes ? `<div class="small" style="margin-top:8px">${order.notes}</div>` : ""}
+          </div>
+          <div class="card">
+            <div class="line"><span>Subtotal</span><span>${total.toFixed(2)}</span></div>
+            <div class="line"><span>Tax</span><span>0.00</span></div>
+            <div class="line"><span>Discount</span><span>0.00</span></div>
+            <div class="line total"><span>Total</span><span>${total.toFixed(2)}</span></div>
+          </div>
+        </div>
+
+        <div style="margin-top:24px;border-top:1px solid #e2e8f0;padding-top:8px;text-align:center" class="small">
+          Thank you for your business!
+        </div>
+      </div>
+    </body>
+  </html>`;
+  return html;
+}
+
 /* -------------------- page -------------------- */
 export default function OrdersPage() {
   // auth / role
@@ -165,6 +397,10 @@ export default function OrdersPage() {
   // confirm dialog
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [targetRow, setTargetRow] = useState(null);
+
+  // receipt preview
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptOrder, setReceiptOrder] = useState(null);
 
   // who am I?
   async function fetchMe() {
@@ -337,6 +573,65 @@ export default function OrdersPage() {
     }
   }
 
+  // PRINT (no new tab; hidden iframe to avoid popup issues)
+  function printOrder(order) {
+  const html = buildPrintableReceiptHTML(order);
+
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.inset = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.visibility = "hidden";
+
+  // Ensure we only print & cleanup once
+  let done = false;
+  const cleanup = () => {
+    if (done) return;
+    done = true;
+    // Guard in case iframe was already removed
+    if (iframe.parentNode) {
+      iframe.parentNode.removeChild(iframe);
+    }
+  };
+
+  const triggerPrint = () => {
+    if (done) return;
+    try {
+      const w = iframe.contentWindow;
+      if (!w) return;
+      w.focus();
+      w.print();
+    } catch (_) {
+      // ignore
+    } finally {
+      // give the browser a moment to open the dialog before removing
+      setTimeout(cleanup, 600);
+    }
+  };
+
+  // Append before writing to avoid some browsers dropping onload
+  document.body.appendChild(iframe);
+
+  // Write the document
+  const doc = iframe.contentDocument || iframe.contentWindow?.document;
+  if (!doc) {
+    cleanup();
+    return;
+  }
+
+  // Use both onload and a fallback timer, but guard with `done`
+  iframe.addEventListener("load", triggerPrint, { once: true });
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // Fallback: if onload doesn't fire (document.write peculiarity)
+  setTimeout(triggerPrint, 250);
+}
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -454,35 +749,45 @@ export default function OrdersPage() {
                     </div>
                   </div>
 
-                  {canEditDelete && (
-                    <div className="mt-4 flex justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          setEditRow({
-                            id: o.id,
-                            customerId: o.customerId,
-                            productId: o.productId,
-                            inventoryId: o.inventoryId,
-                            quantity: o.quantity,
-                            unit_id: o.unit_id,
-                            status: o.status,
-                            paymentMethod: o.paymentMethod,
-                            orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
-                          });
-                          setOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                      >
-                        <Pencil size={16}/> Edit
-                      </button>
-                      <button
-                        onClick={() => { setTargetRow(o); setConfirmOpen(true); }}
-                        className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                      >
-                        <Trash2 size={16}/> Delete
-                      </button>
-                    </div>
-                  )}
+                  <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    {/* Single option: Receipt (opens preview; print from there) */}
+                    <button
+                      onClick={() => { setReceiptOrder(o); setReceiptOpen(true); }}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                    >
+                      <FileText size={16}/> Receipt
+                    </button>
+
+                    {canEditDelete && (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditRow({
+                              id: o.id,
+                              customerId: o.customerId,
+                              productId: o.productId,
+                              inventoryId: o.inventoryId,
+                              quantity: o.quantity,
+                              unit_id: o.unit_id,
+                              status: o.status,
+                              paymentMethod: o.paymentMethod,
+                              orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
+                            });
+                            setOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                        >
+                          <Pencil size={16}/> Edit
+                        </button>
+                        <button
+                          onClick={() => { setTargetRow(o); setConfirmOpen(true); }}
+                          className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                        >
+                          <Trash2 size={16}/> Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -521,6 +826,14 @@ export default function OrdersPage() {
         tone="rose"
         onConfirm={() => targetRow && deleteNow(targetRow)}
         onClose={() => { setConfirmOpen(false); setTargetRow(null); }}
+      />
+
+      {/* Receipt Preview (single action: preview + print) */}
+      <ReceiptModal
+        open={receiptOpen}
+        order={receiptOrder}
+        onPrint={() => receiptOrder && printOrder(receiptOrder)}
+        onClose={() => { setReceiptOpen(false); setReceiptOrder(null); }}
       />
     </div>
   );

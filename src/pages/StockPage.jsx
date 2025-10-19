@@ -2,10 +2,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Boxes, ChevronRight, ChevronDown, Search, Plus, RefreshCw,
-  Pencil, Trash2, Building2, Layers, X
+  Building2, Layers, X
 } from 'lucide-react';
 import { api } from '../utils/api';
-import FormModal from '../components/FormModal';
 
 /* ---------- helpers ---------- */
 const ordinal = (n) => { const s=['th','st','nd','rd'], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); };
@@ -63,6 +62,216 @@ const buildSelects = (rows=[]) => {
   };
 };
 
+/* ---------- Custom modal for create/edit ---------- */
+function Curtain({ onClose }) {
+  return <div className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />;
+}
+function Shell({ children }) {
+  return (
+    <div className="fixed left-1/2 top-1/2 z-[70] w-[92vw] max-w-[980px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/92 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl">
+      {children}
+    </div>
+  );
+}
+
+function CreateEditModal({
+  open,
+  mode, // 'create' | 'edit'
+  initial = {},
+  selects,
+  onClose,
+  onSubmit,
+}) {
+  const [form, setForm] = useState(initial);
+  const [method, setMethod] = useState(initial.method || 'supplier'); // supplier | damaged | transfer
+  const isCreate = mode === 'create';
+
+  useEffect(() => {
+    setForm(initial || {});
+    setMethod(initial.method || 'supplier');
+  }, [initial, open, mode]);
+
+  if (!open) return null;
+
+  const change = (name, val) => setForm((p) => ({ ...p, [name]: val }));
+
+  const submit = (e) => {
+    e.preventDefault();
+    // derive in_out based on method; handled in page handler, we just pass everything
+    onSubmit({ ...form, method });
+  };
+
+  return (
+    <>
+      <Curtain onClose={onClose} />
+      <Shell>
+        {/* header */}
+        <div className="flex items-center justify-between rounded-t-3xl bg-gradient-to-br from-slate-900 to-slate-800 px-5 py-4 text-white">
+          <div className="text-xl font-semibold">
+            {isCreate ? 'New Stock Transaction' : 'Edit Stock'}
+          </div>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10">
+            <X size={18} />
+          </button>
+        </div>
+
+        {isCreate ? (
+          <form onSubmit={submit} className="p-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* Product */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Product *</label>
+                <select
+                  required
+                  value={form.product_id ?? ''}
+                  onChange={(e)=> change('product_id', Number(e.target.value))}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  disabled={!!initial.product_id}
+                >
+                  <option value="" disabled>Select product…</option>
+                  {selects.productOptions.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Inventory (source) */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Inventory (source) *</label>
+                <select
+                  required
+                  value={form.inventory_id ?? ''}
+                  onChange={(e)=> change('inventory_id', Number(e.target.value))}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  disabled={!!initial.inventory_id}
+                >
+                  <option value="" disabled>Select inventory…</option>
+                  {selects.inventoryOptions.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Unit */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Unit *</label>
+                <select
+                  required
+                  value={form.unit_id ?? ''}
+                  onChange={(e)=> change('unit_id', Number(e.target.value))}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  disabled={!!initial.unit_id}
+                >
+                  <option value="" disabled>Select unit…</option>
+                  {selects.unitOptions.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Method */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Method *</label>
+                <select
+                  required
+                  value={method}
+                  onChange={(e)=> setMethod(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                >
+                  <option value="supplier">Supplier (incoming)</option>
+                  <option value="damage">Damaged (write-off)</option>
+                  <option value="transfer">Transfer to another inventory</option>
+                </select>
+              </div>
+
+              {/* Quantity */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Quantity *</label>
+                <input
+                  required
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.stockQuantity ?? ''}
+                  onChange={(e)=> change('stockQuantity', e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  placeholder="0.00"
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Notes (optional)</label>
+                <input
+                  type="text"
+                  value={form.notes ?? ''}
+                  onChange={(e)=> change('notes', e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  placeholder="Any remarks…"
+                />
+              </div>
+
+              {/* Target Inventory — ONLY when transfer */}
+              {method === 'transfer' && (
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-sm font-medium text-slate-700">Target Inventory (destination) *</label>
+                  <select
+                    required
+                    value={form.targetInventoryId ?? ''}
+                    onChange={(e)=> change('targetInventoryId', Number(e.target.value))}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  >
+                    <option value="" disabled>Select target inventory…</option>
+                    {selects.inventoryOptions.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500">Destination must be different from the source inventory.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                Cancel
+              </button>
+              <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+                Save
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={submit} className="p-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-sm font-medium text-slate-700">New quantity (final) *</label>
+                <input
+                  required
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.newQuantity ?? ''}
+                  onChange={(e)=> change('newQuantity', e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                Cancel
+              </button>
+              <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+                Save
+              </button>
+            </div>
+          </form>
+        )}
+      </Shell>
+    </>
+  );
+}
+
+/* ---------- Page ---------- */
 export default function StockPage() {
   // auth
   const [me, setMe] = useState(null);
@@ -82,25 +291,24 @@ export default function StockPage() {
 
   // modal state
   const [modalOpen, setModalOpen] = useState(false);
-  const [editRow, setEditRow] = useState(null);
+  const [mode, setMode] = useState('create'); // 'create' | 'edit'
+  const [initial, setInitial] = useState({});
   const [prefill, setPrefill] = useState(null);
 
-  // -------- auth
+  // auth
   async function fetchMe() {
     try {
       const r = await api.get('/users/verify-token');
       const u = r?.data?.data?.user || r?.data?.user || r?.data;
       setMe(u || null);
-    } catch {
-      setMe(null);
-    }
+    } catch { setMe(null); }
   }
 
-  // -------- data
+  // data
   async function fetchAll() {
     try {
       setLoading(true); setErr(''); setOk('');
-      const r = await api.get('/stock/'); // aggregated list
+      const r = await api.get('/stock/');
       const list = Array.isArray(r?.data?.data) ? r.data.data : (r?.data || []);
       const normalized = list.map(normAgg);
       normalized.sort((a,b)=> String(a.productName||'').localeCompare(String(b.productName||'')));
@@ -111,11 +319,10 @@ export default function StockPage() {
       setLoading(false);
     }
   }
-
   useEffect(() => { fetchMe(); }, []);
   useEffect(() => { fetchAll(); }, []);
 
-  // -------- derived
+  // derived
   const grouped = useMemo(() => {
     const map = new Map();
     rows.forEach(r => {
@@ -160,83 +367,74 @@ export default function StockPage() {
     setOpenKeys(s);
   };
 
-  // selects for the modal
   const { productOptions, inventoryOptions, unitOptions } = useMemo(
     () => buildSelects(rows),
     [rows]
   );
 
-  // fields
-  const CREATE_FIELDS = useMemo(() => ([
-    { name: 'product_id',   type: 'select', label: 'Product',   required: true, options: productOptions, disabled: !!prefill?.product_id },
-    { name: 'inventory_id', type: 'select', label: 'Inventory', required: true, options: inventoryOptions, disabled: !!prefill?.inventory_id },
-    { name: 'unit_id',      type: 'select', label: 'Unit',      required: true, options: unitOptions, disabled: !!prefill?.unit_id },
-    { name: 'stockQuantity', type: 'number', label: 'Quantity (add to stock)', required: true, step: '0.01', min: '0' },
-    { name: 'notes', type: 'textarea', label: 'Notes (optional)' },
-  ]), [productOptions, inventoryOptions, unitOptions, prefill]);
-
-  const EDIT_FIELDS = useMemo(() => ([
-    { name: 'newQuantity', type: 'number', label: 'New quantity (final)', required: true, step: '0.01', min: '0' },
-  ]), []);
-
-  // ------- CRUD (superadmin only) -------
+  // open modals
   function openCreate(pref = null) {
-    if (!isSuper) { setErr('Only Super Admin can create stock entries'); return; }
+    if (!isSuper) { setErr('Only Super Admin can create stock transactions'); return; }
     setPrefill(pref);
-    setEditRow(null);
+    setMode('create');
+    setInitial({
+      product_id: pref?.product_id ?? '',
+      inventory_id: pref?.inventory_id ?? '',
+      unit_id: pref?.unit_id ?? '',
+      stockQuantity: '',
+      notes: '',
+      method: 'supplier',
+    });
     setModalOpen(true);
   }
-  function openEdit(row) {
-    if (!isSuper) { setErr('Only Super Admin can edit stock'); return; }
-    setEditRow(row);
+  function closeModal() {
+    setModalOpen(false);
+    setInitial({});
     setPrefill(null);
-    setModalOpen(true);
   }
-  function closeModal() { setPrefill(null); setEditRow(null); setModalOpen(false); }
 
-  async function handleSubmit(form) {
-    if (!isSuper) { setErr('Only Super Admin can perform this action'); return; }
+  // submit
+  async function handleSubmit(payload) {
     try {
       setErr(''); setOk('');
-      if (editRow) {
-        // Adjust endpoint name if your API differs.
-        // Expects { product_id, inventory_id, unit_id, quantity }
-        await api.put('/stock/set-quantity', {
-          product_id: editRow.product_id,
-          inventory_id: editRow.inventory_id,
-          unit_id: editRow.unit_id,
-          quantity: Number(form.newQuantity),
-        });
-        setOk('Stock quantity updated');
-      } else {
-        // Typical create transaction endpoint
-        await api.post('/stock', {
-          product_id: Number(form.product_id),
-          inventory_id: Number(form.inventory_id),
-          unit_id: Number(form.unit_id),
-          stockQuantity: Number(form.stockQuantity),
-          notes: form.notes || undefined,
-        });
-        setOk('Stock added');
+
+      if (mode === 'edit') {
+        // (Edit path is not used because Edit button is removed,
+        // but keeping a minimal guard in case modal is forced open)
+        setErr('Editing stock is disabled.');
+        return;
       }
+
+      // create
+      const m = String(payload.method || 'supplier'); // supplier | damaged | transfer
+      const in_out = m === 'supplier' ? 'in' : 'out';
+
+      let targetInventoryId;
+      if (m === 'transfer') {
+        targetInventoryId = payload.targetInventoryId ?? null;
+        const src = String(payload.inventory_id || '');
+        if (!targetInventoryId || String(targetInventoryId) === src) {
+          setErr('Please choose a Target Inventory for transfer.');
+          return;
+        }
+      }
+
+      await api.post('/stock', {
+        product_id: Number(payload.product_id),
+        inventory_id: Number(payload.inventory_id),
+        unit_id: Number(payload.unit_id),
+        stockQuantity: Number(payload.stockQuantity),
+        method: m,
+        in_out,
+        targetInventoryId: m === 'transfer' ? Number(targetInventoryId) : undefined,
+        notes: payload.notes || undefined,
+      });
+
+      setOk('Stock transaction recorded');
       closeModal();
       await fetchAll();
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Save failed');
-    }
-  }
-
-  async function deleteStock(row) {
-    if (!isSuper) { setErr('Only Super Admin can delete stock'); return; }
-    if (!window.confirm(`Clear stock for ${row.productName} (${row.inventoryName}, ${row.unitName})?`)) return;
-    try {
-      setErr(''); setOk('');
-      // Adjust to your backend: a common pattern is DELETE /stock/:product_id/:inventory_id/:unit_id
-      await api.delete(`/stock/${row.product_id}/${row.inventory_id}/${row.unit_id}`);
-      setOk('Stock removed');
-      await fetchAll();
-    } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Delete failed');
     }
   }
 
@@ -250,7 +448,9 @@ export default function StockPage() {
               <Boxes size={20}/> Stock
             </h1>
             <p className="text-sm text-slate-500">
-              {isSuper ? 'Manage aggregate stock per Product • Inventory • Unit.' : 'View-only snapshot from /stock.'}
+              {isSuper
+                ? 'Record supplier receipts, damaged write-offs, or transfers. Aggregates are server-calculated.'
+                : 'View-only snapshot from /stock.'}
             </p>
           </div>
 
@@ -338,7 +538,7 @@ export default function StockPage() {
         {loading ? (
           <div className="p-4">
             {[...Array(6)].map((_,i)=>(
-              <div key={i} className="h-12 animate-pulse rounded-xl border border-slate-200 bg-white/60 mb-2"/>
+              <div key={i} className="mb-2 h-12 animate-pulse rounded-xl border border-slate-200 bg-white/60"/>
             ))}
           </div>
         ) : (
@@ -359,7 +559,6 @@ export default function StockPage() {
 
                     <div className="min-w-0">
                       <div className="truncate font-medium text-slate-900">{g.productName}</div>
-                      {g.description && <div className="truncate text-xs text-slate-500">{g.description}</div>}
                     </div>
 
                     <div className="hidden sm:block">
@@ -388,42 +587,24 @@ export default function StockPage() {
                     <div className="px-4 pb-4">
                       <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
                         {/* sub header */}
-                        <div className={`grid ${isSuper ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500`}>
+                        <div className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr] items-center gap-3 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                           <span>Inventory</span>
                           <span>Unit</span>
                           <span>Quantity</span>
                           <span>Updated</span>
-                          {isSuper && <span className="text-right">Actions</span>}
                         </div>
 
                         {/* sub rows */}
                         {(g.stocks.length === 0) ? (
                           <div className="px-3 py-3 text-sm text-slate-500">No stock rows for this product.</div>
                         ) : g.stocks.map(row => (
-                          <div key={row.key} className={`grid ${isSuper ? 'grid-cols-[1.2fr_.7fr_.7fr_.8fr_.6fr]' : 'grid-cols-[1.2fr_.7fr_.7fr_.8fr]'} items-center gap-3 border-t border-slate-200 px-3 py-2.5`}>
+                          <div key={row.key} className="grid grid-cols-[1.2fr_.7fr_.7fr_.8fr] items-center gap-3 border-t border-slate-200 px-3 py-2.5">
                             <div className="min-w-0">
                               <div className="truncate text-sm text-slate-800">{row.inventoryName}</div>
                             </div>
                             <div className="text-sm text-slate-700">{row.unitName}</div>
                             <div className="text-sm font-semibold text-slate-900">{row.stockQuantity}</div>
                             <div className="text-xs text-slate-500">{prettyDateTime(row.updatedAt)}</div>
-
-                            {isSuper && (
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  onClick={()=> openEdit(row)}
-                                  className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
-                                >
-                                  <Pencil size={14}/> Edit
-                                </button>
-                                <button
-                                  onClick={()=> deleteStock(row)}
-                                  className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
-                                >
-                                  <Trash2 size={14}/> Delete
-                                </button>
-                              </div>
-                            )}
                           </div>
                         ))}
                       </div>
@@ -451,24 +632,14 @@ export default function StockPage() {
         )}
       </div>
 
-      {/* Modal (only for superadmin) */}
+      {/* Modal */}
       {isSuper && (
-        <FormModal
-          title={editRow ? 'Edit Stock' : 'New Stock Transaction'}
+        <CreateEditModal
           open={modalOpen}
+          mode={mode}
+          initial={initial}
+          selects={{ productOptions, inventoryOptions, unitOptions }}
           onClose={closeModal}
-          fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-          initial={
-            editRow
-              ? { newQuantity: editRow.stockQuantity }
-              : (prefill
-                  ? {
-                      product_id: prefill.product_id ?? undefined,
-                      inventory_id: prefill.inventory_id ?? undefined,
-                      unit_id: prefill.unit_id ?? undefined
-                    }
-                  : {})
-          }
           onSubmit={handleSubmit}
         />
       )}

@@ -1,17 +1,8 @@
 // src/pages/CategoriesPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Plus,
-  Pencil,
-  Trash2,
-  Search,
-  RefreshCw,
-  Layers,
-  Tags,
-  ArrowUpAZ,
-  ArrowDownAZ,
-  ArrowUp01,
-  ArrowDown10,
+  Plus, Pencil, Trash2, Search, RefreshCw, Layers, Tags,
+  ArrowUpAZ, ArrowDownAZ, ArrowUp01, ArrowDown10, ShieldAlert, X
 } from "lucide-react";
 import { api } from "../utils/api";
 
@@ -21,12 +12,11 @@ const slugify = (s) =>
 
 const CATEGORY_OPTIONS = ["GRAIN", "VEGETABLE", "FRUIT", "DAIRY", "MEAT", "OTHER"];
 
-function normalizeCategoriesResponse(res) {
-  const root = res?.data ?? res;
+function pickArray(root) {
+  if (!root) return [];
   if (Array.isArray(root)) return root;
   if (Array.isArray(root?.data)) return root.data;
   if (Array.isArray(root?.items)) return root.items;
-  if (root?.data && !Array.isArray(root.data)) return [root.data];
   return [];
 }
 
@@ -55,6 +45,55 @@ function SimpleModal({ title, open, onClose, onSubmit, children, submitLabel = "
             className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             {submitLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Confirm Delete modal ---------- */
+function ConfirmDeleteModal({ open, name, busy, error, onCancel, onConfirm }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60]">
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[520px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/95 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)]">
+        <div className="flex items-center justify-between rounded-t-3xl bg-gradient-to-br from-rose-600 to-rose-700 px-5 py-4 text-white">
+          <div className="flex items-center gap-2 font-semibold">
+            <ShieldAlert size={18}/> Confirm deletion
+          </div>
+          <button onClick={onCancel} className="rounded-lg p-1.5 hover:bg-white/10">
+            <X size={18}/>
+          </button>
+        </div>
+
+        <div className="space-y-3 px-5 py-4">
+          <p className="text-sm text-slate-800">
+            You are about to delete the category{" "}
+            <span className="font-semibold">“{name || "—"}”</span>. This cannot be undone.
+          </p>
+          {error && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 rounded-b-3xl border-t border-white/60 bg-white/70 px-5 py-3">
+          <button
+            onClick={onCancel}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+          >
+            <Trash2 size={16}/> {busy ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>
@@ -99,15 +138,23 @@ function StatBadge({ icon: Icon, label, value, tone = "indigo" }) {
 
 /* ---------- Page ---------- */
 export default function CategoriesPage() {
-  // auth / role
+  // auth
   const [me, setMe] = useState(null);
   const isSuper = me?.role === "superadmin";
   const isAdmin = me?.role === "admin";
 
-  // query / sort
+  // server-side pagination
+  const PER_PAGE = 10;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrev, setHasPrev] = useState(false);
+
+  // query / sort (sent to backend)
   const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState("name"); // name | items | updated
-  const [sortDir, setSortDir] = useState("asc");  // asc | desc
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
 
   // modals + forms
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -128,11 +175,13 @@ export default function CategoriesPage() {
     { icon: RefreshCw, label: "Synced", value: "100%", tone: "indigo" },
   ]);
 
-  // pagination
-  const PER_PAGE = 10;
-  const [page, setPage] = useState(1);
+  // delete confirm modal state
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmRow, setConfirmRow] = useState(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmErr, setConfirmErr] = useState("");
 
-  // fetch me
+  // auth
   async function fetchMe() {
     try {
       const r = await api.get("/users/verify-token");
@@ -143,72 +192,47 @@ export default function CategoriesPage() {
     }
   }
 
-  // refetch categories
-  const refetchCategories = async () => {
+  // load categories with server-side pagination
+  async function fetchCategories(nextPage = 1) {
     setLoading(true);
+    setError(null);
     try {
-      const res = await api.get("/categories");
-      const arr = normalizeCategoriesResponse(res);
-      setCategories(Array.isArray(arr) ? arr : []);
+      const res = await api.get("/categories", {
+        params: {
+          page: nextPage,
+          limit: PER_PAGE,
+          q: query || undefined,
+          sort: sortKey || undefined,
+          dir: sortDir || undefined,
+        },
+      });
 
-      const total = arr.length;
-      const totalItems = arr.reduce(
-        (acc, c) => acc + (Array.isArray(c.products) ? c.products.length : Number(c.count) || 0),
-        0
-      );
-      setStats([
-        { icon: Tags, label: "Categories", value: String(total), tone: "indigo" },
-        { icon: Layers, label: "Items", value: String(totalItems), tone: "emerald" },
-        { icon: RefreshCw, label: "Synced", value: "100%", tone: "indigo" },
+      const root = res?.data ?? {};
+      const items = pickArray(root);
+      const p = root.pagination || {};
+
+      setCategories(items);
+      setPage(Number(p.currentPage ?? nextPage) || 1);
+      setTotalPages(Number(p.totalPages ?? 1) || 1);
+      setTotalCount(Number(p.totalCount ?? items.length) || 0);
+      setHasNext(Boolean(p.hasNextPage));
+      setHasPrev(Boolean(p.hasPrevPage));
+
+      setStats((old) => [
+        { ...old[0], value: String(p.totalCount ?? items.length ?? "—") },
+        old[1],
+        old[2],
       ]);
-      setError(null);
     } catch (e) {
       setError(e?.response?.data?.message || "Failed to load categories.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // bootstrap
-  useEffect(() => { fetchMe(); refetchCategories(); }, []);
-
-  // filter/sort
-  const filtered = useMemo(() => {
-    const arr = Array.isArray(categories) ? categories : [];
-    const q = query.trim().toLowerCase();
-    const base = q ? arr.filter((c) => String(c.name || "").toLowerCase().includes(q)) : arr;
-
-    const copy = Array.from(base);
-    copy.sort((a, b) => {
-      const dir = sortDir === "asc" ? 1 : -1;
-      if (sortKey === "name") return String(a.name || "").localeCompare(String(b.name || "")) * dir;
-      if (sortKey === "items") {
-        const av = Array.isArray(a.products) ? a.products.length : Number(a.count) || 0;
-        const bv = Array.isArray(b.products) ? b.products.length : Number(b.count) || 0;
-        return (av - bv) * dir;
-      }
-      if (sortKey === "updated") {
-        const av = new Date(a.updatedAt || 0).getTime();
-        const bv = new Date(b.updatedAt || 0).getTime();
-        return (av - bv) * dir;
-      }
-      return 0;
-    });
-    return copy;
-  }, [categories, query, sortKey, sortDir]);
-
-  // compute pagination
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
-  const currentPage = Math.min(Math.max(1, page), totalPages);
-  useEffect(() => {
-    if (page !== currentPage) setPage(currentPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalPages]);
-
-  const paged = useMemo(() => {
-    const start = (currentPage - 1) * PER_PAGE;
-    return filtered.slice(start, start + PER_PAGE);
-  }, [filtered, currentPage]);
+  // bootstrap & refetch on sort/filter changes
+  useEffect(() => { fetchMe(); }, []);
+  useEffect(() => { fetchCategories(1); }, [query, sortKey, sortDir]);
 
   // actions
   const onEdit = (row) => {
@@ -221,23 +245,28 @@ export default function CategoriesPage() {
     setIsEditOpen(true);
   };
 
-  const onDelete = async (row) => {
-    if (!isSuper) return; // admins cannot delete
-    const hasProducts = Array.isArray(row?.products) && row.products.length > 0;
-    if (hasProducts) {
-      alert(
-        `Cannot delete "${row.name}" because it has ${row.products.length} product${
-          row.products.length > 1 ? "s" : ""
-        }. Please delete or reassign products first.`
-      );
-      return;
-    }
-    if (!window.confirm(`Delete category "${row?.name}"?`)) return;
+  const askDelete = (row) => {
+    if (!(isSuper || isAdmin)) return;
+    setConfirmRow(row);
+    setConfirmErr("");
+    setConfirmOpen(true);
+  };
+
+  const doDelete = async () => {
+    if (!confirmRow) return;
+    setConfirmBusy(true);
+    setConfirmErr("");
     try {
-      await api.delete(`/categories/${row.id}`);
-      await refetchCategories();
+      await api.delete(`/categories/${confirmRow.id}`);
+      setConfirmOpen(false);
+      setConfirmRow(null);
+      // if last item on the page was removed, go back a page
+      const goBack = categories.length === 1 && page > 1;
+      await fetchCategories(goBack ? page - 1 : page);
     } catch (e) {
-      alert(e?.response?.data?.message || e?.message || "Failed to delete category");
+      setConfirmErr(e?.response?.data?.message || e?.message || "Failed to delete category");
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -247,65 +276,58 @@ export default function CategoriesPage() {
       {/* Header */}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Categories</h1>
-        <button
-          type="button"
-          onClick={() => setIsAddOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
-        >
-          <Plus className="h-4 w-4" /> New Category
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch mb-6">
-        {stats.map((s, i) => (
-          <StatBadge key={i} icon={s.icon} label={s.label} value={s.value} tone={s.tone} />
-        ))}
-      </div>
-
-      {/* Search + Sort */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-10 pr-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-indigo-200"
-            placeholder="Search categories..."
-          />
-        </div>
         <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <button
-              onClick={() => setSortKey("name")}
-              className={`px-3 py-2 text-sm ${sortKey === "name" ? "bg-gray-50" : ""}`}
-              title="Sort by name"
-            >
-              {sortDir === "asc" ? <ArrowUpAZ className="h-4 w-4" /> : <ArrowDownAZ className="h-4 w-4" />}
-            </button>
-            <button
-              onClick={() => setSortKey("items")}
-              className={`px-3 py-2 text-sm border-l border-gray-200 ${sortKey === "items" ? "bg-gray-50" : ""}`}
-              title="Sort by items"
-            >
-              {sortDir === "asc" ? <ArrowUp01 className="h-4 w-4" /> : <ArrowDown10 className="h-4 w-4" />}
-            </button>
-            <button
-              onClick={() => setSortKey("updated")}
-              className={`px-3 py-2 text-sm border-l border-gray-200 ${sortKey === "updated" ? "bg-gray-50" : ""}`}
-              title="Sort by updated"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-10 pr-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-indigo-200"
+              placeholder="Search categories…"
+            />
           </div>
           <button
-            onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm hover:bg-gray-50"
-            title="Toggle sort direction"
+            type="button"
+            onClick={() => setIsAddOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
           >
-            {sortDir === "asc" ? "Asc" : "Desc"}
+            <Plus className="h-4 w-4" /> New Category
           </button>
         </div>
+      </div>
+
+      {/* Sort */}
+      <div className="mb-4 flex items-center gap-2">
+        <div className="inline-flex rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <button
+            onClick={() => setSortKey("name")}
+            className={`px-3 py-2 text-sm ${sortKey === "name" ? "bg-gray-50" : ""}`}
+            title="Sort by name"
+          >
+            {sortDir === "asc" ? <ArrowUpAZ className="h-4 w-4" /> : <ArrowDownAZ className="h-4 w-4" />}
+          </button>
+          <button
+            onClick={() => setSortKey("items")}
+            className={`px-3 py-2 text-sm border-l border-gray-200 ${sortKey === "items" ? "bg-gray-50" : ""}`}
+            title="Sort by items"
+          >
+            {sortDir === "asc" ? <ArrowUp01 className="h-4 w-4" /> : <ArrowDown10 className="h-4 w-4" />}
+          </button>
+          <button
+            onClick={() => setSortKey("updated")}
+            className={`px-3 py-2 text-sm border-l border-gray-200 ${sortKey === "updated" ? "bg-gray-50" : ""}`}
+            title="Sort by updated"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
+        <button
+          onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm hover:bg-gray-50"
+          title="Toggle sort direction"
+        >
+          {sortDir === "asc" ? "Asc" : "Desc"}
+        </button>
       </div>
 
       {/* Table */}
@@ -319,16 +341,18 @@ export default function CategoriesPage() {
         <ul className="divide-y divide-gray-100">
           {loading && <li className="p-4 text-sm text-gray-500">Loading…</li>}
           {error && <li className="p-4 text-sm text-red-600">{error}</li>}
-          {!loading && !error && paged.length === 0 && (
+          {!loading && !error && categories.length === 0 && (
             <li className="p-6 text-sm text-gray-500">No categories found.</li>
           )}
 
-          {paged.map((row) => {
+          {categories.map((row) => {
             const itemCount = Array.isArray(row.products) ? row.products.length : Number(row.count) || 0;
-            const cannotDelete = itemCount > 0;
-            const showDelete = isSuper; // admins cannot delete
+            const showDelete = isSuper || isAdmin;
             return (
-              <li key={row.id} className="md:grid md:grid-cols-[minmax(220px,1.2fr)_120px_180px_200px] md:items-center">
+              <li
+                key={row.id}
+                className="md:grid md:grid-cols-[minmax(220px,1.2fr)_120px_180px_200px] md:items-center"
+              >
                 {/* Name */}
                 <div className="flex items-center justify-between gap-3 px-4 py-3 md:py-4">
                   <div className="flex min-w-0 items-center gap-3">
@@ -358,15 +382,9 @@ export default function CategoriesPage() {
                     </button>
                     {showDelete && (
                       <button
-                        onClick={() => onDelete(row)}
-                        disabled={cannotDelete}
-                        title={cannotDelete ? "Cannot delete: category has products" : "Delete"}
-                        className={[
-                          "rounded-lg border p-2",
-                          cannotDelete
-                            ? "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
-                            : "border-gray-200 bg-white hover:bg-gray-50",
-                        ].join(" ")}
+                        onClick={() => askDelete(row)}
+                        className="rounded-lg border border-gray-200 bg-white p-2 hover:bg-gray-50"
+                        title="Delete category"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -396,15 +414,9 @@ export default function CategoriesPage() {
                   </button>
                   {showDelete && (
                     <button
-                      onClick={() => onDelete(row)}
-                      disabled={cannotDelete}
-                      title={cannotDelete ? "Cannot delete: category has products" : "Delete"}
-                      className={[
-                        "inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-medium",
-                        cannotDelete
-                          ? "border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
-                          : "border border-red-200 bg-white text-red-600 hover:bg-red-50",
-                      ].join(" ")}
+                      onClick={() => askDelete(row)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+                      title="Delete category"
                     >
                       <Trash2 className="h-4 w-4" /> Delete
                     </button>
@@ -416,32 +428,29 @@ export default function CategoriesPage() {
         </ul>
       </div>
 
-      {/* Pagination — compact to match other pages */}
+      {/* Pagination — uses backend flags */}
       <div className="mt-4 flex items-center justify-center gap-2">
-        {/* Prev */}
         <button
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={currentPage === 1}
+          onClick={() => fetchCategories(page - 1)}
+          disabled={!hasPrev || page <= 1}
           className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
           title="Previous"
         >
           <span className="opacity-60">‹</span> Prev
         </button>
 
-        {/* number chips: current, plus neighbor */}
         {(() => {
-          const nums = [];
-          const start = Math.max(1, currentPage - 1);
-          const end = Math.min(totalPages, currentPage + 1);
-          for (let i = start; i <= end; i++) nums.push(i);
-          if (currentPage === 1 && totalPages >= 2 && !nums.includes(2)) nums.push(2);
-
-          return nums.map((n) => (
+          const chips = [];
+          const start = Math.max(1, page - 1);
+          const end = Math.min(totalPages, page + 1);
+          for (let i = start; i <= end; i++) chips.push(i);
+          if (page === 1 && totalPages >= 2 && !chips.includes(2)) chips.push(2);
+          return chips.map((n) => (
             <button
               key={n}
-              onClick={() => setPage(n)}
+              onClick={() => fetchCategories(n)}
               className={
-                n === currentPage
+                n === page
                   ? "rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
                   : "rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm hover:bg-gray-50"
               }
@@ -451,10 +460,9 @@ export default function CategoriesPage() {
           ));
         })()}
 
-        {/* Next */}
         <button
-          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          disabled={currentPage === totalPages}
+          onClick={() => fetchCategories(page + 1)}
+          disabled={!hasNext || page >= totalPages}
           className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
           title="Next"
         >
@@ -469,13 +477,10 @@ export default function CategoriesPage() {
         onClose={() => setIsAddOpen(false)}
         onSubmit={async () => {
           const payload = { name: addForm.name?.trim(), categoryCol: addForm.categoryCol };
-          if (!payload.name) {
-            alert("Category name is required");
-            return;
-          }
+          if (!payload.name) { alert("Category name is required"); return; }
           try {
             await api.post("/categories", payload);
-            await refetchCategories();
+            await fetchCategories(page);
             setAddForm({ name: "", slug: "", categoryCol: "GRAIN" });
             setIsAddOpen(false);
           } catch (e) {
@@ -507,14 +512,9 @@ export default function CategoriesPage() {
               className="w-full rounded-lg border px-3 py-2 text-sm bg-white"
             >
               {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
+                <option key={opt} value={opt}>{opt}</option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-gray-500">
-              Example: <span className="font-medium">GRAIN</span>
-            </p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Slug (optional)</label>
@@ -532,19 +532,13 @@ export default function CategoriesPage() {
       <SimpleModal
         title={`Edit: ${editing?.name ?? ""}`}
         open={isEditOpen}
-        onClose={() => {
-          setIsEditOpen(false);
-          setEditing(null);
-        }}
+        onClose={() => { setIsEditOpen(false); setEditing(null); }}
         onSubmit={async () => {
           const payload = { name: editForm.name?.trim(), categoryCol: editForm.categoryCol };
-          if (!payload.name) {
-            alert("Category name is required");
-            return;
-          }
+          if (!payload.name) { alert("Category name is required"); return; }
           try {
             await api.put(`/categories/${editing.id}`, payload);
-            await refetchCategories();
+            await fetchCategories(page);
             setIsEditOpen(false);
           } catch (e) {
             alert(e?.response?.data?.message || e?.message || "Failed to update category");
@@ -575,14 +569,9 @@ export default function CategoriesPage() {
               className="w-full rounded-lg border px-3 py-2 text-sm bg-white"
             >
               {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
+                <option key={opt} value={opt}>{opt}</option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-gray-500">
-              Example: <span className="font-medium">GRAIN</span>
-            </p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Slug (optional)</label>
@@ -595,6 +584,16 @@ export default function CategoriesPage() {
           </div>
         </div>
       </SimpleModal>
+
+      {/* Custom Delete Confirm */}
+      <ConfirmDeleteModal
+        open={confirmOpen}
+        name={confirmRow?.name}
+        busy={confirmBusy}
+        error={confirmErr}
+        onCancel={() => { if (!confirmBusy) { setConfirmOpen(false); setConfirmRow(null); setConfirmErr(""); } }}
+        onConfirm={doDelete}
+      />
     </div>
   );
 }
