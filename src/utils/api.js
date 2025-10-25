@@ -4,7 +4,7 @@ import axios from 'axios';
 /** Resolve env for CRA (REACT_APP_*) and Vite (VITE_*) */
 const ENV = (typeof import.meta !== 'undefined' ? import.meta.env : process.env) || {};
 
-const RAW_BASE   = ENV.VITE_API_BASE || ENV.REACT_APP_API_BASE || 'https://backend.delmabiz.com';
+const RAW_BASE   = ENV.VITE_API_BASE || ENV.REACT_APP_API_BASE || 'https://testing.delmabiz.com';
 const RAW_PREFIX = ENV.VITE_API_PREFIX ?? ENV.REACT_APP_API_PREFIX ?? '/api';
 const LOGIN_PATH = ENV.VITE_LOGIN_PATH || ENV.REACT_APP_LOGIN_PATH || '/users/login';
 

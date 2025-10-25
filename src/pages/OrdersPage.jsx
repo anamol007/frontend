@@ -6,7 +6,6 @@ import {
   Banknote, CalendarClock, Pencil, Trash2, BadgeCheck,
   ChevronLeft, ChevronRight, X, FileText, Printer
 } from "lucide-react";
-import FormModal from "../components/FormModal";
 
 /* -------------------- constants -------------------- */
 const STATUS_COLORS = {
@@ -19,7 +18,7 @@ const STATUS_COLORS = {
 const PAYMENT = ["cash", "cheque", "card", "no"];
 const STATUSES = ["pending", "confirmed", "shipped", "delivered", "cancelled"];
 
-/* -------------------- utils -------------------- */
+/* -------------------- small helpers -------------------- */
 function ordinalSuffix(n) {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
@@ -42,7 +41,7 @@ function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200"
   );
 }
 
-/* -------------------- shared UI: Confirm & Pagination -------------------- */
+/* -------------------- Confirm dialog -------------------- */
 function ConfirmDialog({ open, title = "Are you sure?", message, confirmLabel = "Confirm", tone = "rose", onConfirm, onClose }) {
   if (!open) return null;
   const toneBtn = tone === "rose" ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-600 hover:bg-indigo-700";
@@ -73,306 +72,263 @@ function ConfirmDialog({ open, title = "Are you sure?", message, confirmLabel = 
   );
 }
 
-function Pagination({ total, page, perPage, onPage }) {
-  const pages = Math.max(1, Math.ceil(total / perPage));
-  const goto = (p) => onPage(Math.min(pages, Math.max(1, p)));
+/* -------------------- Order Modal (embedded, supports multiple items) -------------------- */
+function OrderModal({
+  open,
+  title = "Create Order",
+  customers = [],
+  products = [],
+  inventories = [],
+  units = [],
+  initial = null,
+  onClose,
+  onSubmit
+}) {
+  const emptyItem = { productId: "", unit_id: "", quantity: "" };
 
-  const windowSize = 3;
-  let lo = Math.max(1, page - 1);
-  let hi = Math.min(pages, lo + windowSize - 1);
-  lo = Math.max(1, hi - windowSize + 1);
+  const [form, setForm] = useState({
+    customerId: "",
+    inventoryId: "",
+    paymentMethod: "no",
+    status: "",
+    notes: "",
+    items: [ { ...emptyItem } ]
+  });
 
-  const nums = [];
-  for (let p = lo; p <= hi; p++) nums.push(p);
+  React.useEffect(() => {
+    if (!open) return;
+    if (initial) {
+      // editing: fill fields using orderItems
+      const items = (initial.orderItems || []).map(it => ({
+        productId: it.productId,
+        unit_id: it.unit_id,
+        quantity: String(it.quantity || "")
+      }));
+      setForm({
+        customerId: initial.customerId || "",
+        inventoryId: initial.inventoryId || "",
+        paymentMethod: initial.paymentMethod || "no",
+        status: initial.status || "",
+        notes: initial.notes || "",
+        items: items.length ? items : [ { ...emptyItem } ]
+      });
+    } else {
+      setForm({
+        customerId: "",
+        inventoryId: "",
+        paymentMethod: "no",
+        status: "",
+        notes: "",
+        items: [ { ...emptyItem } ]
+      });
+    }
+  }, [open, initial]);
 
-  const btnBase = "inline-flex items-center gap-1 rounded-2xl border px-4 py-2 text-sm transition";
-  const pill = "rounded-2xl px-3 py-2 text-sm font-semibold";
+  if (!open) return null;
 
-  return (
-    <div className="mt-6 flex justify-center">
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => goto(page - 1)}
-          disabled={page === 1}
-          className={`${btnBase} border-slate-200 bg-white text-slate-600 disabled:opacity-40`}
-        >
-          <ChevronLeft size={16} /> Prev
-        </button>
+  const setItem = (idx, key, value) => {
+    setForm(prev => {
+      const items = prev.items.slice();
+      items[idx] = { ...items[idx], [key]: value };
+      return { ...prev, items };
+    });
+  };
+  const addItem = () => setForm(prev => ({ ...prev, items: [...prev.items, { ...emptyItem }] }));
+  const removeItem = (idx) => setForm(prev => {
+    const items = prev.items.slice();
+    items.splice(idx, 1);
+    return { ...prev, items: items.length ? items : [ { ...emptyItem } ] };
+  });
 
-        {nums.map((n) =>
-          n === page ? (
-            <span key={n} className={`${pill} bg-slate-900 text-white shadow`}>{n}</span>
-          ) : (
-            <button
-              key={n}
-              onClick={() => goto(n)}
-              className={`${btnBase} border-slate-200 bg-white text-slate-900 hover:bg-slate-50`}
-            >
-              {n}
-            </button>
-          )
-        )}
-
-        <button
-          onClick={() => goto(page + 1)}
-          disabled={page === pages}
-          className={`${btnBase} border-slate-200 bg-white text-slate-600 disabled:opacity-40`}
-        >
-          Next <ChevronRight size={16} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------- Receipt Preview (no company block) -------------------- */
-function ReceiptModal({ open, order, onClose, onPrint }) {
-  if (!open || !order) return null;
-
-  const id = order.id;
-  const when = order.orderDate || order.createdAt;
-  const cust = order.customer || {};
-  const prod = order.product || {};
-  const inv  = order.inventory || {};
-  const unit = order.unit || {};
-  const qty = Number(order.quantity ?? 0);
-  const total = Number(order.totalAmount ?? 0);
-  const pay = order.paymentMethod || "—";
-  const status = order.status || "pending";
-  const unitPrice = qty > 0 ? total / qty : 0;
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Build payload — do NOT include rate
+    const payload = {
+      customerId: form.customerId,
+      inventoryId: form.inventoryId,
+      paymentMethod: form.paymentMethod,
+      status: form.status || undefined,
+      notes: form.notes || undefined,
+      items: form.items.map(it => ({
+        productId: it.productId,
+        unit_id: it.unit_id,
+        quantity: parseFloat(it.quantity || 0)
+      }))
+    };
+    onSubmit(payload);
+  };
 
   return (
     <div className="fixed inset-0 z-[95]">
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 w-[min(820px,94vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-white/40 bg-white shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b bg-slate-900 px-5 py-4 text-white">
-          <div className="font-semibold">Order Receipt</div>
-          <div className="flex items-center gap-2">
-            <button onClick={onPrint} className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/20">
-              <span className="inline-flex items-center gap-2"><Printer size={16}/> Print</span>
-            </button>
-            <button onClick={onClose} className="rounded-lg bg-white/10 p-2 hover:bg-white/20">
-              <X size={16}/>
-            </button>
-          </div>
+      <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[min(920px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-white/30 bg-white/95 shadow-2xl">
+        <div className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white rounded-t-2xl">
+          <div className="text-lg font-semibold">{title}</div>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10">
+            <X size={18} />
+          </button>
         </div>
 
-        {/* Body */}
-        <div className="p-6">
-          {/* Meta (no company block) */}
-          <div className="flex justify-end">
-            <div className="text-right">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Receipt</div>
-              <div className="text-lg font-semibold text-slate-900">#{id}</div>
-              <div className="text-sm text-slate-600">{formatPrettyDate(when)}</div>
-              <div className="mt-1 inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-xs">
-                <BadgeCheck size={14}/><span className="capitalize">{status}</span>
-              </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700">Customer *</label>
+              <select
+                required
+                value={form.customerId}
+                onChange={e => setForm(prev => ({ ...prev, customerId: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+              >
+                <option value="">Select customer…</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.fullname}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-slate-700">Inventory *</label>
+              <select
+                required
+                value={form.inventoryId}
+                onChange={e => setForm(prev => ({ ...prev, inventoryId: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+              >
+                <option value="">Select inventory…</option>
+                {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-slate-700">Payment</label>
+              <select
+                value={form.paymentMethod}
+                onChange={e => setForm(prev => ({ ...prev, paymentMethod: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+              >
+                {PAYMENT.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-slate-700">Status</label>
+              <select
+                value={form.status}
+                onChange={e => setForm(prev => ({ ...prev, status: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+              >
+                <option value="">— select —</option>
+                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div className="col-span-2">
+              <label className="text-sm font-medium text-slate-700">Notes</label>
+              <input
+                placeholder="Optional notes..."
+                value={form.notes}
+                onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+              />
             </div>
           </div>
 
-          {/* Parties */}
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bill To</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">{cust.fullname || "—"}</div>
-              {cust.email && <div className="text-xs text-slate-600">{cust.email}</div>}
-              {cust.phoneNumber && <div className="text-xs text-slate-600">{cust.phoneNumber}</div>}
-              {cust.address && <div className="text-xs text-slate-600">{cust.address}</div>}
+          <div className="rounded-xl border p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-slate-900 font-medium">Items</div>
+              <button type="button" onClick={addItem} className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm hover:bg-slate-50">
+                <Plus size={14}/> Add item
+              </button>
             </div>
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Fulfilled From</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">{inv.inventoryName || "—"}</div>
-              {inv.address && <div className="text-xs text-slate-600">{inv.address}</div>}
-              {inv.contactNumber && <div className="text-xs text-slate-600">{inv.contactNumber}</div>}
+
+            <div className="space-y-3">
+              {form.items.map((it, idx) => (
+                <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_80px] gap-3 items-center">
+                  <select
+                    required
+                    value={it.productId}
+                    onChange={e => setItem(idx, "productId", e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  >
+                    <option value="">Product *</option>
+                    {products.map(p => <option key={p.id} value={p.id}>{p.productName}</option>)}
+                  </select>
+
+                  <select
+                    required
+                    value={it.unit_id}
+                    onChange={e => setItem(idx, "unit_id", e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  >
+                    <option value="">Unit *</option>
+                    {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Quantity *"
+                    value={it.quantity}
+                    onChange={e => setItem(idx, "quantity", e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
+                  />
+
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-slate-500 text-right">
+                      <div>Rate</div>
+                      <div className="font-medium">—</div>
+                    </div>
+                    <button type="button" onClick={() => removeItem(idx)} className="rounded-full bg-rose-500 p-2 text-white">
+                      <Trash2 size={14}/>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-3 text-xs text-slate-500">
+              Tip: Do not enter a rate — the backend will use the configured product-unit rate.
             </div>
           </div>
 
-          {/* Line item */}
-          <div className="mt-6 overflow-hidden rounded-xl border">
-            <div className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
-              <span>Product</span>
-              <span className="text-right">Qty</span>
-              <span className="text-right">Unit Price</span>
-              <span className="text-right">Amount</span>
-            </div>
-            <div className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center border-t px-3 py-3 text-sm">
-              <div className="min-w-0">
-                <div className="truncate font-medium text-slate-900">{prod.productName || `Product #${order.productId}`}</div>
-                <div className="text-xs text-slate-500">{unit.name ? `Unit: ${unit.name}` : ""}</div>
-              </div>
-              <div className="text-right tabular-nums">{qty}</div>
-              <div className="text-right tabular-nums">{unitPrice.toFixed(2)}</div>
-              <div className="text-right font-semibold tabular-nums">{total.toFixed(2)}</div>
-            </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+              Cancel
+            </button>
+            <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+              Save
+            </button>
           </div>
-
-          {/* Summary */}
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment</div>
-              <div className="mt-1 text-sm text-slate-800 capitalize">{pay}</div>
-              {order.notes && (
-                <>
-                  <div className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</div>
-                  <div className="mt-1 text-sm text-slate-700">{order.notes}</div>
-                </>
-              )}
-            </div>
-            <div className="rounded-xl border bg-white p-4">
-              <div className="flex items-center justify-between text-sm">
-                <div className="text-slate-700">Subtotal</div>
-                <div className="font-medium tabular-nums">{total.toFixed(2)}</div>
-              </div>
-              <div className="mt-1 flex items-center justify-between text-sm">
-                <div className="text-slate-700">Tax</div>
-                <div className="tabular-nums">0.00</div>
-              </div>
-              <div className="mt-1 flex items-center justify-between text-sm">
-                <div className="text-slate-700">Discount</div>
-                <div className="tabular-nums">0.00</div>
-              </div>
-              <div className="mt-3 flex items-center justify-between text-base font-semibold">
-                <div className="text-slate-900">Total</div>
-                <div className="tabular-nums">{total.toFixed(2)}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-8 border-t pt-3 text-center text-xs text-slate-500">
-            Thank you for your business!
-          </div>
-        </div>
+        </form>
       </div>
     </div>
   );
 }
 
-/* -------------------- Build printable HTML with inline CSS -------------------- */
-function buildPrintableReceiptHTML(order) {
-  const id = order.id;
-  const when = formatPrettyDate(order.orderDate || order.createdAt);
-  const cust = order.customer || {};
-  const prod = order.product || {};
-  const inv  = order.inventory || {};
-  const unit = order.unit || {};
-  const qty = Number(order.quantity ?? 0);
-  const total = Number(order.totalAmount ?? 0);
-  const unitPrice = qty > 0 ? total / qty : 0;
-  const status = (order.status || "pending").toUpperCase();
-  const pay = order.paymentMethod || "—";
-
-  const css = `
-    *{box-sizing:border-box} body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;color:#0f172a}
-    .wrap{padding:28px}
-    .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
-    .right{text-align:right}
-    .muted{font-size:12px;color:#64748b;letter-spacing:.06em;text-transform:uppercase}
-    .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid #e2e8f0;border-radius:8px;padding:4px 8px;font-size:12px;margin-top:6px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
-    .card{border:1px solid #e2e8f0;border-radius:12px;padding:12px}
-    .title{font-weight:700;font-size:14px}
-    .small{font-size:12px;color:#475569}
-    .table{border:1px solid #e2e8f0;border-radius:12px;margin-top:18px;overflow:hidden}
-    .thead{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;background:#f8fafc;padding:10px 12px;font-size:12px;font-weight:700;color:#475569}
-    .row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:12px;border-top:1px solid #e2e8f0;font-size:14px}
-    .rightCell{text-align:right}
-    .summary{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
-    .line{display:flex;justify-content:space-between;margin:6px 0;font-size:14px}
-    .total{font-weight:800;font-size:16px;margin-top:8px}
-    @page{size:auto;margin:14mm}
-  `;
-  const html = `
-  <!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>Receipt #${id}</title>
-      <style>${css}</style>
-    </head>
-    <body>
-      <div class="wrap">
-        <div class="top">
-          <div></div>
-          <div class="right">
-            <div class="muted">RECEIPT</div>
-            <div class="title">#${id}</div>
-            <div class="small">${when}</div>
-            <div class="badge">${status}</div>
-          </div>
-        </div>
-
-        <div class="grid">
-          <div class="card">
-            <div class="muted">BILL TO</div>
-            <div class="title">${cust.fullname || "—"}</div>
-            ${cust.email ? `<div class="small">${cust.email}</div>` : ""}
-            ${cust.phoneNumber ? `<div class="small">${cust.phoneNumber}</div>` : ""}
-            ${cust.address ? `<div class="small">${cust.address}</div>` : ""}
-          </div>
-          <div class="card">
-            <div class="muted">FULFILLED FROM</div>
-            <div class="title">${inv.inventoryName || "—"}</div>
-            ${inv.address ? `<div class="small">${inv.address}</div>` : ""}
-            ${inv.contactNumber ? `<div class="small">${inv.contactNumber}</div>` : ""}
-          </div>
-        </div>
-
-        <div class="table">
-          <div class="thead">
-            <div>Product</div><div class="rightCell">Qty</div><div class="rightCell">Unit Price</div><div class="rightCell">Amount</div>
-          </div>
-          <div class="row">
-            <div>
-              <div class="title">${prod.productName || `Product #${order.productId}`}</div>
-              <div class="small">${unit.name ? `Unit: ${unit.name}` : ""}</div>
-            </div>
-            <div class="rightCell">${qty}</div>
-            <div class="rightCell">${unitPrice.toFixed(2)}</div>
-            <div class="rightCell"><strong>${total.toFixed(2)}</strong></div>
-          </div>
-        </div>
-
-        <div class="summary">
-          <div class="card">
-            <div class="muted">PAYMENT</div>
-            <div class="title" style="font-size:14px;font-weight:600;text-transform:capitalize">${pay}</div>
-            ${order.notes ? `<div class="small" style="margin-top:8px">${order.notes}</div>` : ""}
-          </div>
-          <div class="card">
-            <div class="line"><span>Subtotal</span><span>${total.toFixed(2)}</span></div>
-            <div class="line"><span>Tax</span><span>0.00</span></div>
-            <div class="line"><span>Discount</span><span>0.00</span></div>
-            <div class="line total"><span>Total</span><span>${total.toFixed(2)}</span></div>
-          </div>
-        </div>
-
-        <div style="margin-top:24px;border-top:1px solid #e2e8f0;padding-top:8px;text-align:center" class="small">
-          Thank you for your business!
-        </div>
-      </div>
-    </body>
-  </html>`;
-  return html;
-}
-
-/* -------------------- page -------------------- */
+/* -------------------- Main page -------------------- */
 export default function OrdersPage() {
-  // auth / role
   const [me, setMe] = useState(null);
   const role = me?.role || "";
   const isSuper = role === "superadmin";
-  const canCreate = isSuper || role === "admin"; // admins can create
-  const canEditDelete = isSuper;                 // only superadmin can edit/delete
+  const canCreate = isSuper || role === "admin";
+  const canEditDelete = isSuper;
 
-  // admin inventories (from /summary)
   const [myInvIds, setMyInvIds] = useState([]);
   const hasSingleInv = myInvIds.length === 1;
   const mySingleInvId = hasSingleInv ? myInvIds[0] : null;
 
-  // data
+  // server-side pagination (same pattern as CategoriesPage)
+  const PER_PAGE = 10;
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrev, setHasPrev] = useState(false);
+
+  // page rows (current page only)
   const [orders, setOrders] = useState([]);
+
+  // reference data
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventories, setInventories] = useState([]);
@@ -383,26 +339,20 @@ export default function OrdersPage() {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
-  // filters / modal
+  // filters & modal
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [invFilter, setInvFilter] = useState("");
-  const [open, setOpen] = useState(false);
+  const [openModal, setOpenModal] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  // pagination
-  const [page, setPage] = useState(1);
-  const perPage = 10;
-
-  // confirm dialog
+  // confirm & receipt
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [targetRow, setTargetRow] = useState(null);
-
-  // receipt preview
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptOrder, setReceiptOrder] = useState(null);
 
-  // who am I?
+  // who am i?
   async function fetchMe() {
     try {
       const r = await api.get("/users/verify-token");
@@ -414,7 +364,7 @@ export default function OrdersPage() {
   }
   useEffect(() => { fetchMe(); }, []);
 
-  // resolve inventories for admin
+  // resolve inventories available to user (for admin)
   async function resolveMyInventories() {
     try {
       const res = await api.get("/summary", { params: { period: "all" } });
@@ -428,7 +378,7 @@ export default function OrdersPage() {
   }
   useEffect(() => { resolveMyInventories(); }, [isSuper]);
 
-  // reference data
+  // fetch reference lists
   useEffect(() => {
     (async () => {
       try {
@@ -438,200 +388,268 @@ export default function OrdersPage() {
           api.get("/inventory/"),
           api.get("/units/"),
         ]);
-
-        const cust = (c.data?.data ?? c.data ?? []).slice()
-          .sort((a, b) => (a.fullname || "").localeCompare(b.fullname || ""));
-        const prod = (p.data?.data ?? p.data ?? []).slice()
-          .sort((a, b) => (a.productName || "").localeCompare(b.productName || ""));
-        const invAll = (i.data?.data ?? i.data ?? []).slice()
-          .sort((a, b) => (a.inventoryName || "").localeCompare(b.inventoryName || ""));
-        const unit = (u.data?.data ?? u.data ?? []).slice()
-          .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-
+        const cust = (c.data?.data ?? c.data ?? []).slice().sort((a,b)=> (a.fullname||'').localeCompare(b.fullname||''));
+        const prod = (p.data?.data ?? p.data ?? []).slice().sort((a,b)=> (a.productName||'').localeCompare(b.productName||''));
+        const invAll = (i.data?.data ?? i.data ?? []).slice().sort((a,b)=> (a.inventoryName||'').localeCompare(b.inventoryName||''));
+        const unit = (u.data?.data ?? u.data ?? []).slice().sort((a,b)=> (a.name||'').localeCompare(b.name||''));
         setCustomers(cust);
         setProducts(prod);
         setInventories(isSuper ? invAll : invAll.filter(iv => myInvIds.includes(iv.id)));
         setUnits(unit);
-      } catch {
-        // non-fatal
-      }
+      } catch (_) { /* non-fatal */ }
     })();
   }, [isSuper, myInvIds.join(",")]);
 
-  // orders
-  async function fetchOrders() {
+  // fetch orders with server-side pagination
+  async function fetchOrders(nextPage = 1) {
     setLoading(true);
     setErr("");
-    setOk("");
     try {
-      const res = await api.get("/orders/");
-      const list = res?.data?.data ?? res?.data ?? [];
-      setOrders(Array.isArray(list) ? list : []);
+      const params = { page: nextPage, limit: PER_PAGE };
+      if (q) params.q = q;
+      if (statusFilter) params.status = statusFilter;
+      if (invFilter) params.inventoryId = invFilter;
+
+      const res = await api.get("/orders/", { params });
+
+      // Preferred: res.data.pagination { currentPage, totalPages, totalCount, hasNextPage, hasPrevPage } + res.data.data
+      // Fallbacks: rows/count, data/total, top-level array, headers x-total-count
+      const root = res?.data ?? {};
+      const rows = Array.isArray(root.data) ? root.data
+                    : Array.isArray(root.rows) ? root.rows
+                    : Array.isArray(res?.data) ? res.data
+                    : [];
+
+      // pagination object if present
+      const p = root.pagination || {};
+      let current = Number(p.currentPage ?? nextPage) || Number(nextPage);
+      let tPages = Number(p.totalPages ?? 1) || 1;
+      let tCount = Number(p.totalCount ?? (root.total ?? root.count ?? rows.length)) || (rows.length || 0);
+      let nextFlag = Boolean(p.hasNextPage ?? (tPages > current));
+      let prevFlag = Boolean(p.hasPrevPage ?? (current > 1));
+
+      // fallback: Sequelize-style
+      if ((!rows || rows.length === 0) && Array.isArray(root.rows)) {
+        // already handled above
+      } else if (Array.isArray(root.rows) && typeof root.count === "number") {
+        // Sequelize: { rows: [...], count: N }
+        tCount = Number(root.count);
+        tPages = Math.max(1, Math.ceil(tCount / PER_PAGE));
+        current = Number(nextPage);
+        nextFlag = current < tPages;
+        prevFlag = current > 1;
+      } else if (Array.isArray(res?.data) && !root.pagination) {
+        // top-level array returned - try header
+        const headerTotal = Number(res?.headers?.["x-total-count"] ?? 0);
+        if (headerTotal > 0) {
+          tCount = headerTotal;
+          tPages = Math.max(1, Math.ceil(tCount / PER_PAGE));
+        } else {
+          tCount = rows.length;
+          tPages = Math.max(1, Math.ceil(tCount / PER_PAGE));
+        }
+        current = Number(nextPage);
+        nextFlag = current < tPages;
+        prevFlag = current > 1;
+      }
+
+      setOrders(Array.isArray(rows) ? rows : []);
+      setPage(Number(current || nextPage));
+      setTotalPages(Number(tPages || 1));
+      setTotalCount(Number(tCount || 0));
+      setHasNext(Boolean(nextFlag));
+      setHasPrev(Boolean(prevFlag));
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Error fetching orders");
+      // in case of fail, keep previous pagination state
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => { fetchOrders(); }, []);
 
-  // filtering (also reset to page 1 when filters/search change)
-  useEffect(() => { setPage(1); }, [q, statusFilter, invFilter]);
+  // initial + refetch when filters change
+  React.useEffect(() => {
+    setPage(1);
+    fetchOrders(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, statusFilter, invFilter]);
 
-  const filtered = useMemo(() => {
-    let data = [...orders];
-    if (!isSuper && myInvIds.length > 0) {
-      data = data.filter(o => myInvIds.includes(Number(o.inventoryId)));
-    }
-    if (statusFilter) data = data.filter(o => (o.status || "") === statusFilter);
-    if (invFilter) data = data.filter(o => String(o.inventoryId) === String(invFilter));
-    const s = q.trim().toLowerCase();
-    if (!s) return data;
-    return data.filter(o =>
-      (o?.customer?.fullname || "").toLowerCase().includes(s) ||
-      (o?.product?.productName || "").toLowerCase().includes(s) ||
-      (o?.inventory?.inventoryName || "").toLowerCase().includes(s) ||
-      String(o?.id || "").includes(s)
-    );
-  }, [orders, q, statusFilter, invFilter, myInvIds, isSuper]);
+  // page change helpers that mirror CategoriesPage style
+  const goPrev = () => { if (hasPrev && page > 1) fetchOrders(page - 1); };
+  const goNext = () => { if (hasNext && page < totalPages) fetchOrders(page + 1); };
 
-  // page slice
-  const start = (page - 1) * perPage;
-  const pageItems = filtered.slice(start, start + perPage);
-
-  // form fields (match backend)
-  const invOptions = useMemo(() => {
-    const base = inventories.map(i => ({ value: i.id, label: i.inventoryName }));
-    if (!isSuper && hasSingleInv) return base.filter(o => Number(o.value) === mySingleInvId);
-    return base;
-  }, [inventories, isSuper, hasSingleInv, mySingleInvId]);
-
-  const CREATE_FIELDS = useMemo(() => ([
-    { name: "customerId",  type: "select", label: "Customer",   required: true, options: customers.map(c => ({ value: c.id, label: c.fullname })) },
-    { name: "productId",   type: "select", label: "Product",    required: true, options: products.map(p => ({ value: p.id, label: p.productName })) },
-    { name: "inventoryId", type: "select", label: "Inventory",  required: true, options: invOptions },
-    { name: "unit_id",     type: "select", label: "Unit",       required: true, options: units.map(u => ({ value: u.id, label: u.name })) },
-    { name: "quantity",    type: "number", label: "Quantity",   required: true, step: "0.01", min: "0" },
-    { name: "status",      type: "select", label: "Status",     required: false, options: STATUSES },
-    { name: "paymentMethod", type: "select", label: "Payment",  required: false, options: PAYMENT },
-    { name: "orderDate",   type: "datetime-local", label: "Order Date", required: false },
-  ]), [customers, products, units, invOptions]);
-
-  const EDIT_FIELDS = CREATE_FIELDS;
-
-  function sanitize(fields, payload) {
-    const allow = new Set(fields.map(f => f.name));
-    const out = {};
-    Object.entries(payload || {}).forEach(([k, v]) => {
-      if (!allow.has(k)) return;
-      if (v === "" || v === undefined || v === null) return;
-      out[k] = v;
-    });
-    return out;
+  // open modal handlers
+  function openCreateModal() {
+    if (!canCreate) { setErr("Only Admin / Super Admin can create orders"); return; }
+    setEditRow(null);
+    setOpenModal(true);
+  }
+  function openEditModal(order) {
+    if (!isSuper) { setErr("Only Super Admin can edit orders"); return; }
+    setEditRow(order);
+    setOpenModal(true);
   }
 
-  // CRUD
-  async function handleSubmit(form) {
-    const role = me?.role || "";
-    const isSuper = role === "superadmin";
-    const canCreate = isSuper || role === "admin";
+  // sanitize items (frontend only sends productId, unit_id, quantity)
+  function sanitizeItems(items) {
+    return (items || []).map(it => ({
+      productId: it.productId,
+      unit_id: it.unit_id,
+      quantity: Number(it.quantity || 0)
+    }));
+  }
 
-    if (!canCreate) { setErr("Only Admin / Super Admin can create orders"); return; }
-    if (!isSuper && editRow?.id) { setErr("Admins can’t edit orders — only create."); return; }
-
-    const formCopy = { ...form };
-    if (!isSuper && hasSingleInv) formCopy.inventoryId = mySingleInvId;
-
+  // create or update
+  async function handleSubmit(payload) {
     try {
       setErr(""); setOk("");
+      if (!payload.items || !Array.isArray(payload.items) || payload.items.length === 0) {
+        setErr("Please add at least one item");
+        return;
+      }
+      const itemsClean = sanitizeItems(payload.items);
+      for (const it of itemsClean) {
+        if (!it.productId || !it.unit_id || !it.quantity || Number(it.quantity) <= 0) {
+          setErr("Each item must have product, unit and positive quantity");
+          return;
+        }
+      }
+
+      // admin with single inventory -> force inventory
+      if (!isSuper && hasSingleInv) payload.inventoryId = mySingleInvId;
+
+      const body = {
+        customerId: payload.customerId,
+        inventoryId: payload.inventoryId,
+        status: payload.status,
+        paymentMethod: payload.paymentMethod,
+        notes: payload.notes,
+        // do not send rate or amount — backend uses product-unit pricing
+        items: itemsClean
+      };
+
       if (editRow?.id && isSuper) {
-        const body = sanitize(EDIT_FIELDS, formCopy);
         await api.put(`/orders/${editRow.id}`, body);
         setOk("Order updated");
       } else {
-        const body = sanitize(CREATE_FIELDS, formCopy);
         await api.post("/orders/", body);
         setOk("Order created");
       }
-      setOpen(false); setEditRow(null);
-      await fetchOrders();
+
+      setOpenModal(false);
+      setEditRow(null);
+      // refetch current page (server decides ordering)
+      fetchOrders(page);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Action failed");
     }
   }
 
-  // delete (uses custom confirm)
+  // delete
   async function deleteNow(row) {
     if (!canEditDelete) { setErr("Only Super Admin can delete orders"); return; }
     try {
       setErr(""); setOk("");
       await api.delete(`/orders/${row.id}`);
       setOk("Order deleted");
-      await fetchOrders();
+      // if deleting last item on page, back up a page if possible
+      const goBack = orders.length === 1 && page > 1;
+      await fetchOrders(goBack ? page - 1 : page);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Delete failed");
     }
   }
 
-  // PRINT (no new tab; hidden iframe to avoid popup issues)
-  function printOrder(order) {
-  const html = buildPrintableReceiptHTML(order);
+  // print
+  function buildPrintableReceiptHTML(order) {
+    const id = order.id;
+    const when = formatPrettyDate(order.orderDate || order.createdAt);
+    const cust = order.customer || {};
+    const inv  = order.inventory || {};
+    const items = (order.orderItems || []).map(it => ({
+      productName: it.product?.productName || `#${it.productId}`,
+      unitName: it.unit?.name || '',
+      quantity: Number(it.quantity || 0),
+      rate: (typeof it.rate === 'number') ? it.rate.toFixed(2) : "—",
+      amount: (typeof it.amount === 'number') ? it.amount.toFixed(2) : "—"
+    }));
+    const total = Number(order.totalAmount ?? 0).toFixed(2);
 
-  const iframe = document.createElement("iframe");
-  iframe.style.position = "fixed";
-  iframe.style.inset = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
-  iframe.style.border = "0";
-  iframe.style.visibility = "hidden";
+    const css = `
+      *{box-sizing:border-box} body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;color:#0f172a}
+      .wrap{padding:28px;max-width:820px;margin:0 auto}
+      .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+      .muted{font-size:12px;color:#64748b;letter-spacing:.06em;text-transform:uppercase}
+      .table{border:1px solid #e2e8f0;border-radius:8px;margin-top:12px;overflow:hidden}
+      .thead{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;background:#f8fafc;padding:10px 12px;font-size:12px;font-weight:700;color:#475569}
+      .row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:12px;border-top:1px solid #e2e8f0;font-size:14px}
+      .right{text-align:right}
+      .summary{margin-top:16px;display:flex;justify-content:flex-end}
+      .summary .card{border:1px solid #e2e8f0;border-radius:8px;padding:12px;min-width:220px}
+      @page{size:auto;margin:14mm}
+    `;
+    const itemsRows = items.map(it => `
+      <div class="row">
+        <div>
+          <div style="font-weight:600">${it.productName}</div>
+          <div style="font-size:12px;color:#64748b">${it.unitName}</div>
+        </div>
+        <div class="right">${it.quantity}</div>
+        <div class="right">${it.rate}</div>
+        <div class="right">${it.amount}</div>
+      </div>
+    `).join('');
 
-  // Ensure we only print & cleanup once
-  let done = false;
-  const cleanup = () => {
-    if (done) return;
-    done = true;
-    // Guard in case iframe was already removed
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-  };
+    return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice #${id}</title><style>${css}</style></head><body>
+      <div class="wrap">
+        <div class="top"><div><div style="font-weight:700;font-size:18px">Invoice</div><div style="font-size:12px;color:#64748b">#${id}</div></div>
+        <div style="text-align:right"><div style="font-size:12px;color:#64748b">${when}</div><div style="margin-top:8px">${cust.fullname || '—'}</div><div style="font-size:12px;color:#64748b">${inv.inventoryName || ''}</div></div></div>
+        <div class="table"><div class="thead"><div>Product</div><div class="right">Qty</div><div class="right">Rate</div><div class="right">Amount</div></div>${itemsRows}</div>
+        <div class="summary"><div class="card"><div style="display:flex;justify-content:space-between"><div>Subtotal</div><div>${total}</div></div><div style="display:flex;justify-content:space-between;margin-top:8px;font-weight:700"><div>Total</div><div>${total}</div></div></div></div>
+      </div>
+    </body></html>`;
+  }
+  function printHTMLInIframe(html) {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.inset = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.style.visibility = "hidden";
 
-  const triggerPrint = () => {
-    if (done) return;
-    try {
-      const w = iframe.contentWindow;
-      if (!w) return;
-      w.focus();
-      w.print();
-    } catch (_) {
-      // ignore
-    } finally {
-      // give the browser a moment to open the dialog before removing
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    };
+    const triggerPrint = () => {
+      if (done) return;
+      try {
+        const w = iframe.contentWindow;
+        if (!w) return;
+        w.focus();
+        w.print();
+      } catch (_) {}
       setTimeout(cleanup, 600);
-    }
-  };
+    };
 
-  // Append before writing to avoid some browsers dropping onload
-  document.body.appendChild(iframe);
-
-  // Write the document
-  const doc = iframe.contentDocument || iframe.contentWindow?.document;
-  if (!doc) {
-    cleanup();
-    return;
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc) { cleanup(); return; }
+    iframe.addEventListener("load", triggerPrint, { once: true });
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(triggerPrint, 300);
+  }
+  function printOrder(order) {
+    const html = buildPrintableReceiptHTML(order);
+    printHTMLInIframe(html);
   }
 
-  // Use both onload and a fallback timer, but guard with `done`
-  iframe.addEventListener("load", triggerPrint, { once: true });
-
-  doc.open();
-  doc.write(html);
-  doc.close();
-
-  // Fallback: if onload doesn't fire (document.write peculiarity)
-  setTimeout(triggerPrint, 250);
-}
-
+  /* -------------------- UI rendering -------------------- */
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -641,10 +659,11 @@ export default function OrdersPage() {
             <h1 className="text-2xl font-semibold text-slate-900">Orders</h1>
             <p className="text-sm text-slate-500">
               {isSuper
-                ? "Create, edit, or manage orders. Totals are auto-calculated by the server."
+                ? "Create, edit, or manage orders. Pagination and totals are handled server-side."
                 : (canCreate ? "Create new orders for your inventory. (Editing/deleting is restricted.)" : "Browse and filter orders (read-only).")}
             </p>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm">
               <Search size={16} className="text-slate-400" />
@@ -655,6 +674,7 @@ export default function OrdersPage() {
                 className="w-full sm:w-64 bg-transparent outline-none text-sm"
               />
             </div>
+
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
@@ -663,6 +683,7 @@ export default function OrdersPage() {
               <option value="">All status</option>
               {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+
             <select
               value={invFilter}
               onChange={e => setInvFilter(e.target.value)}
@@ -673,15 +694,17 @@ export default function OrdersPage() {
                 <option key={i.id} value={i.id}>{i.inventoryName}</option>
               ))}
             </select>
+
             <button
-              onClick={fetchOrders}
+              onClick={() => fetchOrders(page)}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
             >
               <RefreshCw size={16} /> Refresh
             </button>
+
             {(isSuper || role === "admin") && (
               <button
-                onClick={() => { setEditRow(null); setOpen(true); }}
+                onClick={() => { setEditRow(null); setOpenModal(true); }}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
               >
                 <Plus size={16} /> New Order
@@ -689,6 +712,7 @@ export default function OrdersPage() {
             )}
           </div>
         </div>
+
         {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
         {ok  && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
       </div>
@@ -700,89 +724,50 @@ export default function OrdersPage() {
             <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
-          No orders found.
-        </div>
+      ) : (orders.length === 0) ? (
+        <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">No orders found.</div>
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {pageItems.map(o => {
+            {orders.map(o => {
               const cust = o.customer?.fullname || "—";
-              const prod = o.product?.productName || "—";
+              const prodNames = (o.orderItems || []).map(it => it.product?.productName || `#${it.productId}`).join(", ");
               const inv  = o.inventory?.inventoryName || "—";
-              const unitName = o.unit?.name || "—";
+              const qtyTotal = (o.orderItems || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
               const statusTone = STATUS_COLORS[o.status] || STATUS_COLORS.pending;
 
               return (
-                <div
-                  key={o.id}
-                  className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl"
-                >
+                <div key={o.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
                   <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="bg-slate-100 text-slate-700 border-slate-200">#{o.id}</Badge>
                         <Badge tone={statusTone}><BadgeCheck size={12} /> {o.status || "pending"}</Badge>
-                        <Badge tone="bg-violet-100 text-violet-700 border-violet-200">
-                          <Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}
-                        </Badge>
+                        <Badge tone="bg-violet-100 text-violet-700 border-violet-200"><Banknote size={12}/> {Number(o.totalAmount ?? 0).toFixed(2)}</Badge>
                       </div>
 
-                      <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{prod}</h3>
+                      <h3 className="mt-2 line-clamp-1 text-base font-semibold text-slate-900">{prodNames || "—"}</h3>
                       <div className="mt-1 grid gap-1 text-sm text-slate-600">
-                        <div className="flex items-center gap-2">
-                          <User2 size={14} className="text-slate-400"/><span className="truncate">{cust}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Building2 size={14} className="text-slate-400"/><span className="truncate">{inv}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Package size={14} className="text-slate-400"/><span>{o.quantity} {unitName}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <CalendarClock size={14} className="text-slate-400"/>
-                          <span>{formatPrettyDate(o.orderDate || o.createdAt)}</span>
-                        </div>
+                        <div className="flex items-center gap-2"><User2 size={14} className="text-slate-400"/><span className="truncate">{cust}</span></div>
+                        <div className="flex items-center gap-2"><Building2 size={14} className="text-slate-400"/><span className="truncate">{inv}</span></div>
+                        <div className="flex items-center gap-2"><Package size={14} className="text-slate-400"/><span>{qtyTotal} items</span></div>
+                        <div className="flex items-center gap-2"><CalendarClock size={14} className="text-slate-400"/><span>{formatPrettyDate(o.orderDate || o.createdAt)}</span></div>
                       </div>
                     </div>
                   </div>
 
                   <div className="mt-4 flex flex-wrap justify-end gap-2">
-                    {/* Single option: Receipt (opens preview; print from there) */}
-                    <button
-                      onClick={() => { setReceiptOrder(o); setReceiptOpen(true); }}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                    >
-                      <FileText size={16}/> Receipt
+                    <button onClick={() => { setReceiptOrder(o); setReceiptOpen(true); }} className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                      <FileText size={16}/> Invoice
                     </button>
 
                     {canEditDelete && (
                       <>
-                        <button
-                          onClick={() => {
-                            setEditRow({
-                              id: o.id,
-                              customerId: o.customerId,
-                              productId: o.productId,
-                              inventoryId: o.inventoryId,
-                              quantity: o.quantity,
-                              unit_id: o.unit_id,
-                              status: o.status,
-                              paymentMethod: o.paymentMethod,
-                              orderDate: o.orderDate ? new Date(o.orderDate).toISOString().slice(0,16) : "",
-                            });
-                            setOpen(true);
-                          }}
-                          className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                        >
+                        <button onClick={() => openEditModal(o)} className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">
                           <Pencil size={16}/> Edit
                         </button>
-                        <button
-                          onClick={() => { setTargetRow(o); setConfirmOpen(true); }}
-                          className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                        >
+                        <button onClick={() => { setTargetRow(o); setConfirmOpen(true); }} className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700">
                           <Trash2 size={16}/> Delete
                         </button>
                       </>
@@ -793,31 +778,64 @@ export default function OrdersPage() {
             })}
           </div>
 
-          {/* Pagination */}
-          <Pagination
-            total={filtered.length}
-            page={page}
-            perPage={perPage}
-            onPage={setPage}
-          />
+          {/* Pagination - same style as CategoriesPage */}
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button
+              onClick={goPrev}
+              disabled={!hasPrev || page <= 1}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+              title="Previous"
+            >
+              <span className="opacity-60">‹</span> Prev
+            </button>
+
+            {(() => {
+              const chips = [];
+              const start = Math.max(1, page - 1);
+              const end = Math.min(totalPages, page + 1);
+              for (let i = start; i <= end; i++) chips.push(i);
+              if (page === 1 && totalPages >= 2 && !chips.includes(2)) chips.push(2);
+              return chips.map((n) => (
+                <button
+                  key={n}
+                  onClick={() => fetchOrders(n)}
+                  className={
+                    n === page
+                      ? "rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                      : "rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm hover:bg-gray-50"
+                  }
+                >
+                  {n}
+                </button>
+              ));
+            })()}
+
+            <button
+              onClick={goNext}
+              disabled={!hasNext || page >= totalPages}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm shadow-sm disabled:opacity-40"
+              title="Next"
+            >
+              Next <span className="opacity-60">›</span>
+            </button>
+          </div>
         </>
       )}
 
-      {/* Form Modal */}
-      <FormModal
-        title={editRow ? (isSuper ? "Edit Order" : "Create Order") : "Create Order"}
-        open={open}
-        onClose={() => { setOpen(false); setEditRow(null); }}
-        fields={editRow && isSuper ? EDIT_FIELDS : CREATE_FIELDS}
-        initial={
-          editRow && isSuper
-            ? editRow
-            : (!isSuper && hasSingleInv ? { inventoryId: mySingleInvId } : {})
-        }
+      {/* Order modal (embedded) */}
+      <OrderModal
+        open={openModal}
+        title={editRow ? "Edit Order" : "Create Order"}
+        customers={customers}
+        products={products}
+        inventories={inventories}
+        units={units}
+        initial={editRow}
+        onClose={() => { setOpenModal(false); setEditRow(null); }}
         onSubmit={handleSubmit}
       />
 
-      {/* Confirm Delete */}
+      {/* Confirm delete */}
       <ConfirmDialog
         open={confirmOpen}
         title="Delete Order"
@@ -828,13 +846,58 @@ export default function OrdersPage() {
         onClose={() => { setConfirmOpen(false); setTargetRow(null); }}
       />
 
-      {/* Receipt Preview (single action: preview + print) */}
-      <ReceiptModal
-        open={receiptOpen}
-        order={receiptOrder}
-        onPrint={() => receiptOrder && printOrder(receiptOrder)}
-        onClose={() => { setReceiptOpen(false); setReceiptOrder(null); }}
-      />
+      {/* Receipt preview */}
+      {receiptOpen && receiptOrder && (
+        <div className="fixed inset-0 z-[96] grid place-items-center">
+          <div className="absolute inset-0 bg-slate-900/45" onClick={() => setReceiptOpen(false)} />
+          <div className="relative w-[min(820px,94vw)] max-h-[90vh] overflow-auto rounded-2xl border bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h3 className="text-base font-semibold text-slate-900">Order Invoice</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { printOrder(receiptOrder); }} className="rounded-lg bg-slate-100 px-3 py-2 text-sm"><Printer size={14}/> Print</button>
+                <button onClick={() => setReceiptOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={16}/></button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="flex justify-between">
+                <div>
+                  <div className="text-xs text-slate-500">Invoice</div>
+                  <div className="text-xl font-semibold text-slate-900">#{receiptOrder.id}</div>
+                  <div className="text-sm text-slate-600">{formatPrettyDate(receiptOrder.orderDate || receiptOrder.createdAt)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm text-slate-700">{receiptOrder.customer?.fullname || "—"}</div>
+                  <div className="text-xs text-slate-500">{receiptOrder.inventory?.inventoryName || ""}</div>
+                </div>
+              </div>
+
+              <div className="mt-6 overflow-hidden rounded-xl border">
+                <div className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <span>Product</span><span className="text-right">Qty</span><span className="text-right">Unit Price</span><span className="text-right">Amount</span>
+                </div>
+
+                {(receiptOrder.orderItems || []).map((it, idx) => (
+                  <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center border-t px-3 py-3 text-sm">
+                    <div className="min-w-0"><div className="truncate font-medium text-slate-900">{it.product?.productName || `#${it.productId}`}</div><div className="text-xs text-slate-500">{it.unit?.name || ""}</div></div>
+                    <div className="text-right tabular-nums">{it.quantity}</div>
+                    <div className="text-right tabular-nums">{(typeof it.rate === "number") ? it.rate.toFixed(2) : "—"}</div>
+                    <div className="text-right font-semibold tabular-nums">{(typeof it.amount === "number") ? it.amount.toFixed(2) : "—"}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <div className="w-64 rounded-xl border bg-white p-4">
+                  <div className="flex items-center justify-between text-sm"><div>Subtotal</div><div className="font-medium">{Number(receiptOrder.totalAmount || 0).toFixed(2)}</div></div>
+                  <div className="mt-3 flex items-center justify-between text-base font-semibold"><div>Total</div><div>{Number(receiptOrder.totalAmount || 0).toFixed(2)}</div></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
