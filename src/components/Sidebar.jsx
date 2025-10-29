@@ -107,8 +107,10 @@ export default function Sidebar() {
           <div className="mt-2 px-2">
             <Item to="/dashboard/users" icon={Users} label="Users" />
             <Item to="/dashboard/products" icon={Package} label="Products" />
+            <Item to="/dashboard/product-processes" icon={Package} label="Product Processes" />
             <Item to="/dashboard/categories" icon={Tags} label="Categories" />
             <Item to="/dashboard/customers" icon={UserCircle2} label="Customers" />
+            <Item to="/dashboard/suppliers" icon={UserCircle2} label="Suppliers" />
             <Item to="/dashboard/product-units" icon={ClipboardList} label="Product Units" />
           </div>
         </div>
@@ -120,6 +122,7 @@ export default function Sidebar() {
             <Item to="/dashboard/inventories" icon={Map} label="Inventories" />
             {/* <Item to="/dashboard/transfers" icon={ArrowLeftRight} label="Transfers" /> */}
             <Item to="/dashboard/stock" icon={Boxes} label="Stock" />
+            <Item to ="/dashboard/purchases" icon={Boxes} label="Purchases" />
             <Item to="/dashboard/drivers" icon={Truck} label="Drivers" />
             <Item to="/dashboard/deliveries" icon={ClipboardList} label="Deliveries" />
             <Item to="/dashboard/orders" icon={ListChecks} label="Orders" />

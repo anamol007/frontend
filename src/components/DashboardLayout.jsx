@@ -16,6 +16,9 @@ import OrdersPage from '../pages/OrdersPage';
 import SummaryPage from '../pages/SummaryPage';
 // import StockTransfersPage from '../pages/StockTransfersPage';
 import MyProfilePage from '../pages/MyProfilePage';
+import SuppliersPage from '../pages/SuppliersPage';
+import PurchasesPage from '../pages/PurchasesPage';
+import ProductProcessesPage from '../pages/ProductProcessesPage';
 
 export default function DashboardLayout() {
   return (
@@ -57,14 +60,17 @@ export default function DashboardLayout() {
                 {/* master data */}
                 <Route path="users" element={<UsersPage />} />
                 <Route path="products" element={<ProductsPage />} />
+                <Route path="product-processes" element={<ProductProcessesPage />} />
                 <Route path="categories" element={<CategoriesPage />} />
                 <Route path="customers" element={<CustomersPage />} />
+                <Route path="suppliers" element={<SuppliersPage />} />
                 <Route path="product-units" element={<ProductUnitsPage />} />
                 <Route path="orders" element={<OrdersPage />} />
 
                 {/* transactions */}
                 <Route path="inventories" element={<InventoriesPage />} />
                 <Route path="stock" element={<StockPage />} />
+                <Route path="purchases" element={<PurchasesPage />} />
                 {/* <Route path="transfers" element={<StockTransfersPage />} /> */}
                 <Route path="drivers" element={<DriversPage />} />
                 <Route path="deliveries" element={<DeliveriesPage />} />
