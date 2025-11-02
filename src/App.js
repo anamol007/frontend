@@ -18,6 +18,7 @@ import MyProfilePage from './pages/MyProfilePage';
 
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import CustomerProfilePage from './pages/CustomerProfilePage';
 
 export default function App(){
   return (
@@ -49,6 +50,7 @@ export default function App(){
           <Route path="deliveries" element={<DeliveriesPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="my-profile" element={<MyProfilePage />} />
+          <Route path="customers/:id" element={<CustomerProfilePage />} />
         </Route>
 
         {/* fallback */}

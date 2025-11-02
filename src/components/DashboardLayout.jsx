@@ -19,6 +19,8 @@ import MyProfilePage from '../pages/MyProfilePage';
 import SuppliersPage from '../pages/SuppliersPage';
 import PurchasesPage from '../pages/PurchasesPage';
 import ProductProcessesPage from '../pages/ProductProcessesPage';
+import CustomerProfilePage from '../pages/CustomerProfilePage';
+import MixturePage from '../pages/MixturePage';
 
 export default function DashboardLayout() {
   return (
@@ -63,9 +65,11 @@ export default function DashboardLayout() {
                 <Route path="product-processes" element={<ProductProcessesPage />} />
                 <Route path="categories" element={<CategoriesPage />} />
                 <Route path="customers" element={<CustomersPage />} />
+                <Route path="customers/:id" element={<CustomerProfilePage />} /> 
                 <Route path="suppliers" element={<SuppliersPage />} />
                 <Route path="product-units" element={<ProductUnitsPage />} />
                 <Route path="orders" element={<OrdersPage />} />
+                <Route path="mixture" element={<MixturePage />} />
 
                 {/* transactions */}
                 <Route path="inventories" element={<InventoriesPage />} />

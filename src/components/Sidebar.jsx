@@ -108,6 +108,7 @@ export default function Sidebar() {
             <Item to="/dashboard/users" icon={Users} label="Users" />
             <Item to="/dashboard/products" icon={Package} label="Products" />
             <Item to="/dashboard/product-processes" icon={Package} label="Product Processes" />
+            <Item to="/dashboard/mixture" icon={Package} label="Mixture" />
             <Item to="/dashboard/categories" icon={Tags} label="Categories" />
             <Item to="/dashboard/customers" icon={UserCircle2} label="Customers" />
             <Item to="/dashboard/suppliers" icon={UserCircle2} label="Suppliers" />

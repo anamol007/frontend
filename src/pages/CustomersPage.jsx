@@ -1,10 +1,11 @@
 // src/pages/CustomersPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  UserCircle2, Plus, Pencil, Trash2, Search, RefreshCw, Phone, MapPin, ShieldAlert, X, Check
+  UserCircle2, Plus, Pencil, Trash2, Search, RefreshCw, Phone, MapPin, ShieldAlert, X
 } from 'lucide-react';
 import { api } from '../utils/api';
 import FormModal from '../components/FormModal';
+import { useNavigate } from 'react-router-dom';
 
 /* ---------------- Avatar ---------------- */
 function Avatar({ name = '' }) {
@@ -72,6 +73,8 @@ function ConfirmDialog({ open, title, message, confirmLabel = 'Delete', onConfir
 
 /* ---------------- Page ---------------- */
 export default function CustomersPage() {
+  const navigate = useNavigate();
+
   // who am I? (for role gating)
   const [me, setMe] = useState(null);
   const role = me?.role || '';
@@ -213,6 +216,7 @@ export default function CustomersPage() {
   /* ----- Delete (uses custom popup) ----- */
   function askDelete(row) {
     if (!isSuper) { setErr('Only superadmin can delete customers.'); return; }
+    setErr(''); setOk('');
     setConfirm({ open: true, row });
   }
 
@@ -235,6 +239,12 @@ export default function CustomersPage() {
   const withCoords = sorted.filter(c =>
     (c.latitude != null && c.longitude != null) || (c.lat != null && c.lon != null)
   ).length;
+
+  /* ----- Navigation to profile ----- */
+  const openProfile = (id) => {
+  if (!id) return;
+  navigate(`/dashboard/customers/${id}`); // ✅ fixed absolute path
+};
 
   return (
     <div className="space-y-5 bg-gradient-to-br from-slate-50 via-indigo-50 to-emerald-50/40">
@@ -316,7 +326,13 @@ export default function CustomersPage() {
               <div className="flex items-start gap-3">
                 <Avatar name={c.fullname} />
                 <div className="min-w-0">
-                  <h3 className="truncate text-base font-semibold text-slate-900">{c.fullname || '—'}</h3>
+                  <h3
+                    className="truncate text-base font-semibold text-slate-900 cursor-pointer hover:underline"
+                    onClick={() => openProfile(c.id)}
+                    title="View profile"
+                  >
+                    {c.fullname || '—'}
+                  </h3>
                   <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
                     <Phone size={16} className="text-slate-400" />
                     <span className="truncate">{c.phoneNumber || '—'}</span>
@@ -334,26 +350,35 @@ export default function CustomersPage() {
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-                {isSuper ? (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={()=>{ setEditRow(c); setOpen(true); }}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                    >
-                      <Pencil size={16} /> Edit
-                    </button>
-                    <button
-                      onClick={()=> askDelete(c)}
-                      className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
-                    >
-                      <Trash2 size={16} /> Delete
-                    </button>
-                  </div>
-                ) : isAdmin ? (
-                  <div className="text-xs text-slate-400">Create-only (no edits)</div>
-                ) : (
-                  <div className="text-xs text-slate-400">Read-only</div>
-                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => openProfile(c.id)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                  >
+                    Profile
+                  </button>
+
+                  {isSuper ? (
+                    <>
+                      <button
+                        onClick={()=>{ setEditRow(c); setOpen(true); }}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+                      >
+                        <Pencil size={16} /> Edit
+                      </button>
+                      <button
+                        onClick={()=> askDelete(c)}
+                        className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+                      >
+                        <Trash2 size={16} /> Delete
+                      </button>
+                    </>
+                  ) : isAdmin ? (
+                    <div className="text-xs text-slate-400">Create-only (no edits)</div>
+                  ) : (
+                    <div className="text-xs text-slate-400">Read-only</div>
+                  )}
+                </div>
               </div>
             </div>
           ))}
