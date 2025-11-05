@@ -21,6 +21,7 @@ import PurchasesPage from '../pages/PurchasesPage';
 import ProductProcessesPage from '../pages/ProductProcessesPage';
 import CustomerProfilePage from '../pages/CustomerProfilePage';
 import MixturePage from '../pages/MixturePage';
+import ProductMovementPage from '../pages/ProductMovementPage';
 
 export default function DashboardLayout() {
   return (
@@ -70,6 +71,7 @@ export default function DashboardLayout() {
                 <Route path="product-units" element={<ProductUnitsPage />} />
                 <Route path="orders" element={<OrdersPage />} />
                 <Route path="mixture" element={<MixturePage />} />
+                <Route path="product-movement" element={<ProductMovementPage />} />
 
                 {/* transactions */}
                 <Route path="inventories" element={<InventoriesPage />} />
