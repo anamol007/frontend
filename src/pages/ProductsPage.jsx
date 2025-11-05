@@ -10,7 +10,8 @@ import { api } from '../utils/api';
 const cls = (...a) => a.filter(Boolean).join(' ');
 const byAlpha = (get = (x) => x) =>
   (a, b) => `${get(a)}`.localeCompare(`${get(b)}`, undefined, { sensitivity: 'base' });
-const PAGE_SIZE = 5;
+// change: server-side page size = 10
+const PAGE_SIZE = 10;
 
 // ---------- shared UI ----------
 function Modal({ open, onClose, title, children, footer }) {
@@ -119,50 +120,58 @@ function ConfirmModal({
   );
 }
 
-// ---------- Pager ----------
+// ---------- Pager (simple centered style, uses server pagination) ----------
+// Replace your existing Pager with this improved Pager
 function Pager({ page, pages, onPage }) {
-  if (pages <= 1) return null;
+  if (!pages || pages <= 1) return null;
+
   const canPrev = page > 1;
   const canNext = page < pages;
 
-  const windowSize = 1;
-  const blocks = [];
-  for (let i = 1; i <= pages; i++) {
-    if (i === 1 || i === pages || (i >= page - windowSize && i <= page + windowSize)) {
-      blocks.push(i);
-    } else if (blocks[blocks.length - 1] !== '…') {
-      blocks.push('…');
-    }
+  // show first 4 pages, then ellipsis if there are more
+  const nums = [];
+  if (pages <= 4) {
+    for (let i = 1; i <= pages; i++) nums.push(i);
+  } else {
+    nums.push(1, 2, 3, 4);
   }
 
   return (
-    <div className="mt-4 flex items-center justify-end gap-2">
+    <div className="mt-6 flex items-center justify-center gap-2">
+      {/* Prev Button */}
       <button
         onClick={() => onPage(page - 1)}
         disabled={!canPrev}
-        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm disabled:opacity-40"
+        className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-40"
       >
-        <ChevronLeft size={16}/> Prev
+        Prev
       </button>
-      {blocks.map((b, i) =>
-        b === '…' ? (
-          <span key={`d${i}`} className="px-1.5 text-slate-400">…</span>
-        ) : (
-          <button
-            key={b}
-            onClick={() => onPage(b)}
-            className={`h-8 w-8 rounded-lg text-sm font-medium ${b === page ? 'bg-slate-900 text-white' : 'border'}`}
-          >
-            {b}
-          </button>
-        )
-      )}
+
+      {/* Page numbers */}
+      {nums.map((n) => (
+        <button
+          key={n}
+          onClick={() => onPage(n)}
+          className={`h-8 w-8 rounded-lg text-sm font-medium transition-colors ${
+            n === page
+              ? 'bg-slate-900 text-white shadow'
+              : 'border hover:bg-slate-100'
+          }`}
+        >
+          {n}
+        </button>
+      ))}
+
+      {/* Ellipsis if more than 4 pages */}
+      {pages > 4 && <span className="px-2 text-slate-400">…</span>}
+
+      {/* Next Button */}
       <button
         onClick={() => onPage(page + 1)}
         disabled={!canNext}
-        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm disabled:opacity-40"
+        className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-40"
       >
-        Next <ChevronRight size={16}/>
+        Next
       </button>
     </div>
   );
@@ -181,8 +190,10 @@ export default function ProductsPage() {
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
 
-  // pagination
+  // server-side pagination state
   const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
 
   // auth / role
   const [me, setMe] = useState(null);
@@ -219,14 +230,59 @@ export default function ProductsPage() {
     }
   }
 
-  // fetchers
-  async function fetchProducts() {
+  // fetch helpers (server-side products)
+  async function fetchProducts(p = 1) {
     setLoading(true);
     setErr(''); setOk('');
     try {
-      const res = await api.get('/products'); // returns productUnits included
-      const data = res?.data?.data ?? res?.data ?? [];
-      setProducts((Array.isArray(data) ? data : []).slice().sort(byAlpha(p => p.productName)));
+      const params = { page: p, limit: PAGE_SIZE };
+      if (q) params.q = q;
+      const res = await api.get('/products', { params });
+
+      // try multiple possible response shapes
+      const root = res?.data ?? {};
+      // items may be in root.data, root.rows, root.items
+      const items = Array.isArray(root.data)
+        ? root.data
+        : Array.isArray(root.rows)
+        ? root.rows
+        : Array.isArray(root.items)
+        ? root.items
+        : Array.isArray(res?.data)
+        ? res.data
+        : [];
+
+      // pagination info
+      const pagination = root.pagination ?? root.meta ?? root.paging ?? null;
+      let pagesCount = 1;
+      let total = items.length;
+      let currentPage = Number(p);
+
+      if (pagination) {
+        pagesCount = Number(pagination.pages ?? pagination.totalPages ?? pagination.total_pages ?? pagination.pagesCount ?? Math.max(1, Math.ceil((pagination.total ?? total) / (pagination.limit ?? PAGE_SIZE))));
+        total = Number(pagination.total ?? pagination.totalItems ?? pagination.count ?? total);
+        currentPage = Number(pagination.page ?? pagination.currentPage ?? p);
+      } else {
+        // Sequelize-style: root.count + root.rows
+        if (typeof root.count === 'number' && Array.isArray(root.rows)) {
+          total = Number(root.count);
+          pagesCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+          currentPage = Number(p);
+        } else {
+          // fallback: try headers (X-Total-Count)
+          const headerTotal = Number(res?.headers?.['x-total-count'] ?? 0);
+          if (headerTotal > 0) {
+            total = headerTotal;
+            pagesCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            currentPage = Number(p);
+          }
+        }
+      }
+
+      setProducts(Array.isArray(items) ? items : []);
+      setPages(Number(pagesCount || 1));
+      setTotalItems(Number(total || 0));
+      setPage(Number(currentPage || p));
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Failed to load products');
     } finally {
@@ -252,31 +308,24 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchMe();
-    fetchProducts();
     fetchUnits();
     fetchCategories();
+    fetchProducts(1); // initial load page 1
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // derived lists
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (!term) return products;
-    return products.filter(p =>
-      (p.productName || '').toLowerCase().includes(term) ||
-      (p.description || '').toLowerCase().includes(term) ||
-      (p?.category?.name || p?.categoryName || '').toLowerCase().includes(term)
-    );
-  }, [q, products]);
+  // when search term changes, reset to page 1 and fetch
+  useEffect(() => {
+    const t = setTimeout(() => fetchProducts(1), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
-  // pagination slices
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageClamped = Math.min(page, pages);
-  const paged = useMemo(() => {
-    const start = (pageClamped - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, pageClamped]);
-
-  useEffect(() => { setPage(1); }, [q]); // reset when searching
+  // when page changes, fetch that page
+  useEffect(() => {
+    fetchProducts(page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   // open create
   const openCreate = () => {
@@ -327,7 +376,7 @@ export default function ProductsPage() {
         setOk('Product created');
       }
       setOpenEdit(false);
-      await fetchProducts();
+      await fetchProducts(page);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || 'Action failed');
     }
@@ -357,7 +406,7 @@ export default function ProductsPage() {
           await api.delete(`/products/${p.id}`);
           setConfirmMode('success');
           setConfirmMsg('Product deleted.');
-          await fetchProducts();
+          await fetchProducts(Math.max(1, page));
         } catch (e) {
           setConfirmMode('error');
           setConfirmMsg(e?.response?.data?.message || e?.message || 'Delete failed');
@@ -455,7 +504,7 @@ export default function ProductsPage() {
               />
             </div>
             <button
-              onClick={fetchProducts}
+              onClick={() => fetchProducts(page)}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
             >
               <RefreshCw size={16} /> Refresh
@@ -481,14 +530,14 @@ export default function ProductsPage() {
             <div key={i} className="h-40 animate-pulse rounded-2xl border border-slate-200 bg-white/60" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : products.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white/70 p-10 text-center text-slate-500">
           No products found.
         </div>
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {paged.map(p => (
+            {products.map(p => (
               <div key={p.id} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white/80 to-white/60 p-4 backdrop-blur transition-shadow hover:shadow-xl">
                 <div className="pointer-events-none absolute -top-12 -right-12 h-24 w-24 rounded-full bg-indigo-500/10 blur-2xl transition-all group-hover:scale-150" />
                 <div className="flex items-start gap-3">
@@ -543,7 +592,7 @@ export default function ProductsPage() {
             ))}
           </div>
 
-          <Pager page={pageClamped} pages={pages} onPage={(p)=> setPage(Math.max(1, Math.min(pages, p)))} />
+          <Pager page={page} pages={pages} onPage={(p)=> setPage(Math.max(1, Math.min(pages, p)))} />
         </>
       )}
 
