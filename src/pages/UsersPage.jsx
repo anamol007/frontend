@@ -2,10 +2,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   User as UserIcon, Search, Plus, RefreshCw, Pencil, Trash2, Building2, ShieldAlert,
-  ChevronLeft, ChevronRight, CheckCircle2, XCircle, X as XIcon
+  ChevronLeft, ChevronRight, CheckCircle2, XCircle, X as XIcon, Eye, EyeOff
 } from 'lucide-react';
 import { api } from '../utils/api';
-import FormModal from '../components/FormModal';
 
 /* ---------- helpers ---------- */
 const prettyDate = (d) => {
@@ -15,168 +14,381 @@ const prettyDate = (d) => {
 };
 const PAGE_SIZE = 10; // backend sends 10 per page
 
-/* ---------- simple modal shells ---------- */
-function Curtain({ onClose }) {
-  return <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />;
-}
-function Shell({ children, className = '' }) {
-  return (
-    <div className={`absolute left-1/2 top-1/2 w-[92vw] max-w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-3xl border border-white/30 bg-white/90 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)] backdrop-blur-xl ${className}`}>
-      {children}
-    </div>
-  );
-}
+/* ---------- small UI pieces ---------- */
 
-/* ---------- Custom Confirm/Delete Modal ---------- */
-function ConfirmDeleteModal({ open, user, status, message, onCancel, onConfirm }) {
+function TopNoticeModal({ open, title = 'Notice', message = '', onClose }) {
   if (!open) return null;
-  const isConfirm = status === 'confirm';
-  const isSuccess = status === 'success';
-  const isError   = status === 'error';
-
   return (
-    <div className="fixed inset-0 z-[80]">
-      <Curtain onClose={onCancel} />
-      <Shell>
-        {/* header */}
-        <div className={`flex items-center justify-between rounded-t-3xl px-5 py-4 text-white ${isConfirm ? 'bg-slate-900' : isSuccess ? 'bg-emerald-600' : 'bg-rose-600'}`}>
-          <div className="font-semibold">
-            {isConfirm ? 'Confirm deletion' : isSuccess ? 'Deleted' : 'Delete failed'}
+    <div className="fixed inset-0 z-[90] grid place-items-start p-6">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative w-[min(920px,96vw)] rounded-2xl border bg-white shadow-2xl">
+        <div className="flex items-center justify-between gap-4 border-b px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600"><UserIcon /></div>
+            <div>
+              <div className="text-sm font-semibold text-slate-900">{title}</div>
+              <div className="text-xs text-slate-500">{message?.split('\n')[0]}</div>
+            </div>
           </div>
-          <button onClick={onCancel} className="rounded-lg p-2 hover:bg-white/10"><XIcon size={18} /></button>
+          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-50"><XIcon /></button>
         </div>
-
-        {/* body */}
-        <div className="p-6">
-          {isConfirm && (
-            <>
-              <div className="text-slate-800">
-                You are about to delete user <span className="font-semibold">{user?.fullname}</span>.
-              </div>
-              <div className="mt-1 text-sm text-slate-500">This action cannot be undone.</div>
-            </>
-          )}
-
-          {isSuccess && (
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="text-emerald-600 shrink-0" size={22} />
-              <div>
-                <div className="font-medium text-slate-900">User deleted</div>
-                <div className="text-sm text-slate-600">{message || 'The user was removed successfully.'}</div>
-              </div>
-            </div>
-          )}
-
-          {isError && (
-            <div className="flex items-start gap-3">
-              <XCircle className="text-rose-600 shrink-0" size={22} />
-              <div>
-                <div className="font-medium text-slate-900">Failed to delete</div>
-                <div className="text-sm text-slate-600">{message || 'Something went wrong.'}</div>
-              </div>
-            </div>
-          )}
+        <div className="px-5 py-4 text-sm text-slate-700">
+          {message?.split('\n').map((line, idx) => <div key={idx} className="mb-2">{line}</div>)}
         </div>
-
-        {/* footer */}
-        <div className="flex justify-end gap-2 rounded-b-3xl border-t border-white/60 bg-white/70 px-5 py-3">
-          {isConfirm ? (
-            <>
-              <button onClick={onCancel} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
-              <button onClick={onConfirm} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">Delete</button>
-            </>
-          ) : (
-            <button onClick={onCancel} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Close</button>
-          )}
+        <div className="flex justify-end gap-2 border-t px-5 py-3">
+          <button onClick={onClose} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Close</button>
         </div>
-      </Shell>
+      </div>
     </div>
   );
 }
 
-/* ---------- Pagination Control (same look as other pages) ---------- */
+/* Password strength helper */
+function passwordStrength(password = '') {
+  let score = 0;
+  if (!password) return { score, label: 'Empty' };
+  if (password.length >= 8) score++;
+  if (/[A-Z]/.test(password)) score++;
+  if (/[0-9]/.test(password)) score++;
+  if (/[^A-Za-z0-9]/.test(password)) score++;
+  const map = {
+    0: { label: 'Very weak' },
+    1: { label: 'Weak' },
+    2: { label: 'Fair' },
+    3: { label: 'Good' },
+    4: { label: 'Strong' }
+  };
+  return { score, label: map[score]?.label || 'Weak' };
+}
+
+/* A minimal controlled modal form for users with immediate inline validation */
+function UserFormModal({ open, initial, isSuper, inventories = [], onClose, onSubmit }) {
+  const safeInitial = initial || {};
+  const isEdit = Boolean(safeInitial?.id);
+
+  const [form, setForm] = useState({
+    fullname: safeInitial.fullname ?? '',
+    email: safeInitial.email ?? '',
+    password: '',
+    role: safeInitial.role ?? 'admin',
+    inventoryId: (safeInitial?.managedItems?.[0]?.inventory?.id ?? (safeInitial.inventoryId ?? '')) ?? '',
+    phoneNumber: safeInitial.phoneNumber ?? ''
+  });
+  const [showPassword, setShowPassword] = useState(false);
+
+  // inline errors object keyed by field name
+  const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (!open) {
+      setForm({
+        fullname: safeInitial.fullname ?? '',
+        email: safeInitial.email ?? '',
+        password: '',
+        role: safeInitial.role ?? 'admin',
+        inventoryId: (safeInitial?.managedItems?.[0]?.inventory?.id ?? (safeInitial.inventoryId ?? '')) ?? '',
+        phoneNumber: safeInitial.phoneNumber ?? ''
+      });
+      setErrors({});
+      setShowPassword(false);
+    } else {
+      setForm({
+        fullname: safeInitial.fullname ?? '',
+        email: safeInitial.email ?? '',
+        password: '',
+        role: safeInitial.role ?? 'admin',
+        inventoryId: (safeInitial?.managedItems?.[0]?.inventory?.id ?? (safeInitial.inventoryId ?? '')) ?? '',
+        phoneNumber: safeInitial.phoneNumber ?? ''
+      });
+      setErrors({});
+      setShowPassword(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initial]);
+
+  // Nepali number validation: accept numbers that start with 97 or 98 and are 10 digits total.
+  const nepaliPhoneRegex = /^9(7|8)\d{8}$/;
+
+  // validate either single field (fieldName) or full form (no arg)
+  function validate(fieldName = null) {
+    const e = { ...errors }; // start with current errors so we only change what's needed
+
+    // helpers
+    const setFieldError = (k, msg) => { e[k] = msg; };
+    const clearFieldError = (k) => { if (e[k]) delete e[k]; };
+
+    // full validation function
+    const runFull = () => {
+      const full = {};
+      if (!form.fullname || form.fullname.trim().length < 3) full.fullname = 'Full name is required (min 3 characters).';
+      const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!form.email || !emailRx.test(form.email)) full.email = 'Valid email required.';
+      if (!isEdit && (!form.password || form.password.length < 6)) {
+        full.password = 'Password is required (min 6 characters).';
+      } else if (form.password && form.password.length > 0 && form.password.length < 6) {
+        full.password = 'Password must be at least 6 characters.';
+      }
+      const pn = (form.phoneNumber || '').trim();
+      if (pn && !nepaliPhoneRegex.test(pn)) {
+        full.phoneNumber = 'Nepali mobile required (start with 97 or 98 and 10 digits). E.g., 9841xxxxxx';
+      }
+      if (!form.role) full.role = 'Role is required.';
+      // inventory only required when role === 'admin'
+      if (form.role === 'admin') {
+        if (!form.inventoryId) full.inventoryId = 'Managed inventory is required for Admin role.';
+      }
+      return full;
+    };
+
+    if (!fieldName) {
+      // full check
+      const full = runFull();
+      setErrors(full);
+      return Object.keys(full).length === 0;
+    }
+
+    // single-field validation (instant)
+    switch (fieldName) {
+      case 'fullname': {
+        if (!form.fullname || form.fullname.trim().length < 3) setFieldError('fullname', 'Full name is required (min 3 characters).');
+        else clearFieldError('fullname');
+        break;
+      }
+      case 'email': {
+        const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!form.email || !emailRx.test(form.email)) setFieldError('email', 'Valid email required.');
+        else clearFieldError('email');
+        break;
+      }
+      case 'password': {
+        if (!isEdit && (!form.password || form.password.length < 6)) setFieldError('password', 'Password is required (min 6 characters).');
+        else if (form.password && form.password.length > 0 && form.password.length < 6) setFieldError('password', 'Password must be at least 6 characters.');
+        else clearFieldError('password');
+        break;
+      }
+      case 'phoneNumber': {
+        const pn = (form.phoneNumber || '').trim();
+        if (pn && !nepaliPhoneRegex.test(pn)) setFieldError('phoneNumber', 'Nepali mobile required (start with 97 or 98 and 10 digits). E.g., 9841xxxxxx');
+        else clearFieldError('phoneNumber');
+        break;
+      }
+      case 'role': {
+        if (!form.role) setFieldError('role', 'Role is required.');
+        else clearFieldError('role');
+        // when role changes, also reevaluate inventory: if new role !== admin, clear inventory error
+        if (form.role !== 'admin') {
+          clearFieldError('inventoryId');
+        } else {
+          // if switched to admin, inventory must be present
+          if (!form.inventoryId) setFieldError('inventoryId', 'Managed inventory is required for Admin role.');
+        }
+        break;
+      }
+      case 'inventoryId': {
+        // only validate inventory when role === 'admin'
+        if (form.role === 'admin') {
+          if (!form.inventoryId) setFieldError('inventoryId', 'Managed inventory is required for Admin role.');
+          else clearFieldError('inventoryId');
+        } else {
+          // don't show error when role != admin
+          clearFieldError('inventoryId');
+        }
+        break;
+      }
+      default:
+        break;
+    }
+
+    setErrors(e);
+    return !Object.keys(e).length;
+  }
+
+  // handle single-field change and run immediate validation for that field
+  function handleChange(k, v) {
+    setForm(s => ({ ...s, [k]: v }));
+    // run instant validation for this field
+    setTimeout(() => validate(k), 0);
+  }
+
+  async function submit(e) {
+    e?.preventDefault?.();
+    const ok = validate(); // full check
+    if (!ok) return;
+    const body = {
+      fullname: form.fullname.trim(),
+      email: form.email.trim(),
+      role: form.role,
+      phoneNumber: form.phoneNumber.trim() || undefined,
+      inventoryId: form.inventoryId || undefined,
+    };
+    if (form.password) body.password = form.password;
+    await onSubmit(body);
+  }
+
+  const pwdInfo = passwordStrength(form.password || '');
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
+      <div className="relative w-[min(680px,96vw)] rounded-2xl border bg-white shadow-2xl">
+        <form onSubmit={submit}>
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div>
+              <h3 className="text-lg font-semibold">{isEdit ? `Edit user — ${safeInitial.fullname ?? ''}` : 'New user'}</h3>
+              <div className="text-xs text-slate-500">{isEdit ? 'Leave password empty to keep current password.' : ''}</div>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><XIcon /></button>
+          </div>
+
+          <div className="px-5 py-4 space-y-3">
+            <div>
+              <label className="text-xs font-medium text-slate-700">Full name</label>
+              <input value={form.fullname} onChange={e => handleChange('fullname', e.target.value)} className="w-full rounded-xl border px-3 py-2 mt-1" />
+              {errors.fullname && <div className="mt-1 text-xs text-rose-600">{errors.fullname}</div>}
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Email</label>
+              <input value={form.email} onChange={e => handleChange('email', e.target.value)} className="w-full rounded-xl border px-3 py-2 mt-1" />
+              {errors.email && <div className="mt-1 text-xs text-rose-600">{errors.email}</div>}
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Password {isEdit ? <span className="text-xs text-slate-400">(optional)</span> : null}</label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={e => handleChange('password', e.target.value)}
+                  placeholder={isEdit ? 'Leave empty to keep current password' : ''}
+                  className="w-full rounded-xl border px-3 py-2"
+                />
+                <button type="button" onClick={() => setShowPassword(s => !s)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-50">
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <div className="mt-2 flex items-center gap-3">
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div style={{ width: `${(pwdInfo.score / 4) * 100}%` }} className={`h-2 ${pwdInfo.score >= 3 ? 'bg-emerald-500' : pwdInfo.score === 2 ? 'bg-amber-400' : 'bg-rose-500'}`} />
+                </div>
+                <div className="text-xs text-slate-500">{pwdInfo.label}</div>
+              </div>
+              {errors.password && <div className="mt-1 text-xs text-rose-600">{errors.password}</div>}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-slate-700">Role</label>
+                <select value={form.role} onChange={e => handleChange('role', e.target.value)} className="w-full rounded-xl border px-3 py-2 mt-1">
+                  <option value="admin">Admin</option>
+                  <option value="superadmin">Super Admin</option>
+                </select>
+                {errors.role && <div className="mt-1 text-xs text-rose-600">{errors.role}</div>}
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-700">Phone (Nepali)</label>
+                <input value={form.phoneNumber} onChange={e => handleChange('phoneNumber', e.target.value.replace(/\s+/g, ''))} placeholder="9841xxxxxxxx" className="w-full rounded-xl border px-3 py-2 mt-1" />
+                <div className="text-xs text-slate-400 mt-1">Must start with <span className="font-medium">97</span> or <span className="font-medium">98</span> and be 10 digits (e.g. 9841xxxxxx)</div>
+                {errors.phoneNumber && <div className="mt-1 text-xs text-rose-600">{errors.phoneNumber}</div>}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Managed Inventory (required for Admin)</label>
+              <select
+                value={form.inventoryId}
+                onChange={e => handleChange('inventoryId', e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 mt-1"
+                disabled={form.role !== 'admin'}
+              >
+                <option value="">{form.role === 'admin' ? 'Select inventory…' : 'Select role "Admin" to assign inventory'}</option>
+                {inventories.map(inv => <option key={inv.id} value={inv.id}>{inv.inventoryName ?? inv.name ?? `#${inv.id}`}</option>)}
+              </select>
+              {/* only show inventory error when role === 'admin' */}
+              {form.role === 'admin' && errors.inventoryId && <div className="mt-1 text-xs text-rose-600">{errors.inventoryId}</div>}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 border-t px-5 py-3">
+            <button type="button" onClick={onClose} className="rounded-xl border px-4 py-2 text-sm">Cancel</button>
+            <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">{isEdit ? 'Save' : 'Create'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Pagination Control (centered, simple numbers, truncated like old design) ---------- */
 function Pager({ page, pages, onPage }) {
   if (pages <= 1) return null;
-  const canPrev = page > 1;
-  const canNext = page < pages;
-
-  const windowSize = 1;
   const nums = [];
-  for (let i = 1; i <= pages; i++) {
-    if (i === 1 || i === pages || (i >= page - windowSize && i <= page + windowSize)) {
-      nums.push(i);
-    } else if (nums[nums.length - 1] !== '…') {
-      nums.push('…');
+  const maxVisible = 4;
+  if (pages <= maxVisible) {
+    for (let i = 1; i <= pages; i++) nums.push(i);
+  } else {
+    if (page <= 3) {
+      nums.push(1, 2, 3, 4, '…', pages);
+    } else if (page >= pages - 2) {
+      nums.push(1, '…', pages - 3, pages - 2, pages - 1, pages);
+    } else {
+      nums.push(1, '…', page - 1, page, page + 1, '…', pages);
     }
   }
 
   return (
-    <div className="mt-3 flex items-center justify-end gap-2">
-      <button
-        onClick={() => onPage(page - 1)}
-        disabled={!canPrev}
-        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm disabled:opacity-40"
-      >
-        <ChevronLeft size={16} /> Prev
-      </button>
-      {nums.map((n, i) =>
-        n === '…' ? (
-          <span key={`e${i}`} className="px-1.5 text-slate-400">…</span>
-        ) : (
+    <div className="mt-3 flex items-center justify-center gap-2">
+      <button onClick={() => onPage(Math.max(1, page - 1))} disabled={page === 1} className="inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm disabled:opacity-40">Prev</button>
+
+      {nums.map((n, i) => (
+        n === '…' ? <span key={i} className="px-2 text-slate-400">…</span>
+        : (
           <button
             key={n}
             onClick={() => onPage(n)}
-            className={`h-8 w-8 rounded-lg text-sm font-medium ${n === page ? 'bg-slate-900 text-white' : 'border'}`}
+            className={`h-9 min-w-[40px] px-3 rounded-lg text-sm font-medium ${n === page ? 'bg-slate-900 text-white' : 'border bg-white'}`}
           >
             {n}
           </button>
         )
-      )}
-      <button
-        onClick={() => onPage(page + 1)}
-        disabled={!canNext}
-        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-sm disabled:opacity-40"
-      >
-        Next <ChevronRight size={16} />
-      </button>
+      ))}
+
+      <button onClick={() => onPage(Math.min(pages, page + 1))} disabled={page === pages} className="inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm disabled:opacity-40">Next</button>
     </div>
   );
 }
 
+/* ---------- Main Page (polished) ---------- */
 export default function UsersPage() {
-  /* ---------- role / me ---------- */
   const [me, setMe] = useState(null);
   const isAdmin = me?.role === 'admin';
   const isSuper = me?.role === 'superadmin';
 
-  /* ---------- data ---------- */
   const [users, setUsers] = useState([]);
   const [inventories, setInventories] = useState([]);
-  const [myManagedInvs, setMyManagedInvs] = useState([]); // admin’s inventories
+  const [myManagedInvs, setMyManagedInvs] = useState([]);
 
-  /* ---------- ui ---------- */
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  const [globalNotice, setGlobalNotice] = useState(null);
   const [ok, setOk] = useState('');
 
-  /* ---------- filters & paging ---------- */
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
-  /* ---------- modals ---------- */
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  // custom confirm delete
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState(null);
-  const [confirmStatus, setConfirmStatus] = useState('confirm'); // confirm | success | error
+  const [confirmStatus, setConfirmStatus] = useState('confirm');
   const [confirmMsg, setConfirmMsg] = useState('');
 
-  /* ---------- bootstrap ---------- */
   async function fetchMe() {
     try {
       const r = await api.get('/users/verify-token');
@@ -194,139 +406,118 @@ export default function UsersPage() {
     }
   }
 
-  // 🔁 fetch inventories (labels) + paged users (server pagination)
-  async function fetchPage(p = 1) {
-    try {
-      setLoading(true);
-      setErr(''); setOk('');
+  // debounced server-side search & paging
+  useEffect(() => {
+    let mounted = true;
+    let timer = null;
+    async function load(p = 1) {
+      try {
+        setLoading(true);
+        setErr(''); setOk('');
+        const invRes = await api.get('/inventory/');
+        const invData = Array.isArray(invRes?.data?.data) ? invRes.data.data : (invRes?.data || []);
+        invData.sort((a, b) => String(a.inventoryName || '').localeCompare(String(b.inventoryName || '')));
+        if (mounted) setInventories(invData);
 
-      // inventories (labels & options)
-      const invRes = await api.get('/inventory/');
-      const invData = Array.isArray(invRes?.data?.data) ? invRes.data.data : (invRes?.data || []);
-      invData.sort((a, b) => String(a.inventoryName || '').localeCompare(String(b.inventoryName || '')));
-      setInventories(invData);
+        const params = { page: p, limit: PAGE_SIZE };
+        if (q && q.trim()) params.q = q.trim();
+        if (roleFilter) params.role = roleFilter;
 
-      if (isSuper) {
-        // server-side paginated users
-        const uRes = await api.get('/users/', { params: { page: p, limit: PAGE_SIZE } });
+        const uRes = await api.get('/users/', { params });
         const payload = uRes?.data || {};
         const usersData = Array.isArray(payload.data) ? payload.data : (payload || []);
-        usersData.sort((a, b) => String(a.fullname || '').localeCompare(String(b.fullname || '')));
-        setUsers(usersData);
-
-        const meta = payload.pagination || {};
-        setTotalPages(Number(meta.totalPages) || 1);
-        setTotalCount(Number(meta.total) || usersData.length);
-        setPage(Number(meta.page) || p);
-      } else {
-        setUsers([]);
-        setTotalPages(1);
-        setTotalCount(0);
+        if (mounted) {
+          setUsers(Array.isArray(usersData) ? usersData : []);
+          const meta = payload.pagination || {};
+          setTotalPages(Number(meta.pages ?? meta.totalPages ?? 1) || 1);
+          setTotalCount(Number(meta.total ?? usersData.length) || 0);
+          setPage(Number(meta.page) || p);
+        }
+      } catch (e) {
+        if (mounted) setErr(e?.response?.data?.message || e?.message || 'Error fetching users');
+      } finally {
+        if (mounted) setLoading(false);
       }
+    }
+
+    timer = setTimeout(() => { load(1); }, 400);
+    return () => { mounted = false; clearTimeout(timer); };
+  }, [q, roleFilter]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadPage(p = 1) {
+      try {
+        setLoading(true);
+        setErr('');
+        const params = { page: p, limit: PAGE_SIZE };
+        if (q && q.trim()) params.q = q.trim();
+        if (roleFilter) params.role = roleFilter;
+        const uRes = await api.get('/users/', { params });
+        const payload = uRes?.data || {};
+        const usersData = Array.isArray(payload.data) ? payload.data : (payload || []);
+        if (!mounted) return;
+        setUsers(Array.isArray(usersData) ? usersData : []);
+        const meta = payload.pagination || {};
+        setTotalPages(Number(meta.pages ?? meta.totalPages ?? 1) || 1);
+        setTotalCount(Number(meta.total ?? usersData.length) || 0);
+        setPage(Number(meta.page) || p);
+      } catch (e) {
+        if (mounted) setErr(e?.response?.data?.message || e?.message || 'Error fetching users');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadPage(page);
+    return () => { mounted = false; };
+  }, [page, roleFilter, q]);
+
+  useEffect(() => { fetchMe(); }, []);
+
+  async function createUser(body) {
+    try {
+      setErr(''); setOk('');
+      await api.post('/users/', body);
+      setOk('User created');
+      setModalOpen(false);
+      setPage(1);
+      const r = await api.get('/users/', { params: { page: 1, limit: PAGE_SIZE } });
+      const payload = r?.data || {};
+      setUsers(Array.isArray(payload.data) ? payload.data : []);
+      const meta = payload.pagination || {};
+      setTotalPages(Number(meta.pages ?? meta.totalPages ?? 1) || 1);
+      setTotalCount(Number(meta.total ?? (Array.isArray(payload.data) ? payload.data.length : 0)) || 0);
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Error fetching users');
-    } finally {
-      setLoading(false);
+      const msg = e?.response?.data?.message || e?.message || 'Create failed';
+      setGlobalNotice({ title: 'Create failed', message: msg });
+      throw e;
     }
   }
 
-  useEffect(() => { fetchMe(); }, []);
-  useEffect(() => { if (me) fetchPage(page); }, [me]); // initial load when role known
-  useEffect(() => { if (isSuper) fetchPage(page); }, [page]); // go to page
-
-  /* ---------- options ---------- */
-  const allInvOptions = useMemo(
-    () => (inventories || []).map(i => ({ value: i.id, label: i.inventoryName || `#${i.id}` })),
-    [inventories]
-  );
-
-  /* ---------- FIELD DEFINITIONS (driver removed) ---------- */
-  const CREATE_FIELDS = useMemo(() => ([
-    { name: 'fullname', type: 'text', label: 'Full name', required: true },
-    { name: 'email', type: 'email', label: 'Email', required: true },
-    { name: 'password', type: 'password', label: 'Password', required: true },
-    {
-      name: 'role',
-      type: 'select',
-      label: 'Role',
-      required: true,
-      // 🚫 No driver option here
-      options: [
-        { value: 'admin',      label: 'Admin' },
-        { value: 'superadmin', label: 'Super Admin' },
-      ],
-    },
-    {
-      name: 'inventoryId',
-      type: 'select',
-      label: 'Managed Inventory (only for Admin)',
-      required: false,
-      options: [{ value: '', label: '— Optional —' }, ...allInvOptions],
-      helper: 'If role is Admin, you may assign an inventory to manage.',
-    },
-  ]), [allInvOptions]);
-
-  const EDIT_FIELDS = useMemo(() => ([
-    { name: 'fullname', type: 'text', label: 'Full name' },
-    { name: 'email', type: 'email', label: 'Email' },
-    { name: 'password', type: 'password', label: 'New password (optional)' },
-    {
-      name: 'role',
-      type: 'select',
-      label: 'Role',
-      options: [
-        // 🚫 No driver option here either
-        { value: 'admin',      label: 'Admin' },
-        { value: 'superadmin', label: 'Super Admin' },
-      ],
-      helper: 'If role is Admin, you can assign a managed inventory below.',
-    },
-    {
-      name: 'inventoryId',
-      type: 'select',
-      label: 'Managed Inventory (Admin only)',
-      required: false,
-      options: [
-        { value: '', label: '— No change —' },
-        ...allInvOptions,
-        { value: 'null', label: 'Remove assignment' },
-      ],
-      helper: 'Pick a new inventory for this Admin, or “Remove assignment”.',
-    },
-  ]), [allInvOptions]);
-
-  /* ---------- utilities ---------- */
-  function sanitize(fields, payload) {
-    const allow = new Set(fields.map(f => f.name));
-    const out = {};
-    Object.entries(payload || {}).forEach(([k, v]) => {
-      if (!allow.has(k)) return;
-      if (v === '' || v === undefined) return;
-      if (k === 'inventoryId') {
-        if (v === 'null') out[k] = null;
-        else {
-          const num = typeof v === 'number' ? v : Number(v);
-          out[k] = Number.isNaN(num) ? v : num;
-        }
-        return;
-      }
-      out[k] = v === 'null' ? null : v;
-    });
-    return out;
+  async function updateUser(id, body) {
+    try {
+      await api.put(`/users/${id}`, body);
+      setOk('User updated');
+      setModalOpen(false);
+      const res = await api.get('/users/', { params: { page, limit: PAGE_SIZE } });
+      const payload = res?.data || {};
+      setUsers(Array.isArray(payload.data) ? payload.data : []);
+    } catch (e) {
+      const msg = e?.response?.data?.message || e?.message || 'Update failed';
+      setGlobalNotice({ title: 'Update failed', message: msg });
+      throw e;
+    }
   }
 
-  /* ---------- CRUD ---------- */
-  async function createUser(body) { return api.post('/users/', body); }
-  async function updateUser(id, body) { return api.put(`/users/${id}`, body); }
-
-  // DELETE via custom popup
   async function performDeleteUser(user) {
     try {
       setConfirmStatus('confirm'); setConfirmMsg('');
       await api.delete(`/users/${user.id}`);
       setConfirmStatus('success');
       setConfirmMsg('The user has been removed.');
-      await fetchPage(page); // refresh current page
+      const res = await api.get('/users/', { params: { page, limit: PAGE_SIZE } });
+      const payload = res?.data || {};
+      setUsers(Array.isArray(payload.data) ? payload.data : []);
     } catch (e) {
       setConfirmStatus('error');
       setConfirmMsg(e?.response?.data?.message || e?.message || 'Delete failed');
@@ -340,42 +531,21 @@ export default function UsersPage() {
     setConfirmOpen(true);
   }
 
-  // Form submit
   async function handleSubmit(form) {
     try {
-      setErr(''); setOk('');
-
       if (editRow?.id) {
-        const body = sanitize(EDIT_FIELDS, form);
-        await updateUser(editRow.id, body);
-        setOk('User updated');
-        setEditRow(null);
-        setModalOpen(false);
-        await fetchPage(page);
-        return;
+        await updateUser(editRow.id, form);
+      } else {
+        await createUser(form);
       }
-
-      // CREATE (only admin/superadmin)
-      const body = sanitize(CREATE_FIELDS, form);
-      await createUser(body);
-      setOk('User created');
-      setModalOpen(false);
-      // after create, reload page 1 to show the newest at top (backend orders DESC)
-      setPage(1);
-      await fetchPage(1);
     } catch (e) {
-      setErr(e?.response?.data?.message || e?.message || 'Action failed');
+      // handled above
     }
   }
 
-  // modal helpers
-  function openCreate() { setEditRow(null); setModalOpen(true); }
-  function openEdit(row) { setEditRow(row); setModalOpen(true); }
-  function closeModal() { setEditRow(null); setModalOpen(false); }
-
-  /* ---------- client-side filter (applied to current page rows) ---------- */
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
+    if (!term && !roleFilter) return users;
     return (users || []).filter(u => {
       if (roleFilter && u.role !== roleFilter) return false;
       if (!term) return true;
@@ -388,16 +558,10 @@ export default function UsersPage() {
     });
   }, [users, q, roleFilter]);
 
-  // Note: pagination is server-driven; we still show backend total pages.
-  const pages = totalPages;
-  const showingCount = filtered.length;
-
-  // reset to page 1 when search/filter changes so user sees relevant results
-  useEffect(() => { if (isSuper) setPage(1); }, [q, roleFilter, isSuper]);
-
-  /* ---------- RENDER ---------- */
   return (
     <div className="space-y-5">
+      <TopNoticeModal open={Boolean(globalNotice)} title={globalNotice?.title} message={globalNotice?.message} onClose={() => setGlobalNotice(null)} />
+
       <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -417,7 +581,7 @@ export default function UsersPage() {
                 <Search size={16} className="text-slate-400" />
                 <input
                   value={q}
-                  onChange={(e)=> setQ(e.target.value)}
+                  onChange={(e)=> { setQ(e.target.value); setPage(1); }}
                   placeholder="Search name / email / inventory…"
                   className="w-72 bg-transparent outline-none text-sm"
                 />
@@ -425,7 +589,7 @@ export default function UsersPage() {
 
               <select
                 value={roleFilter}
-                onChange={e=> setRoleFilter(e.target.value)}
+                onChange={e=> { setRoleFilter(e.target.value); setPage(1); }}
                 className="rounded-xl border bg-white px-3 py-2.5 text-sm shadow-sm outline-none"
               >
                 <option value="">All roles</option>
@@ -435,14 +599,14 @@ export default function UsersPage() {
               </select>
 
               <button
-                onClick={()=> fetchPage(page)}
+                onClick={()=> { setPage(1); }}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100"
               >
                 <RefreshCw size={16}/> Refresh
               </button>
 
               <button
-                onClick={openCreate}
+                onClick={() => { setEditRow(null); setModalOpen(true); }}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md"
               >
                 <Plus size={16}/> New User
@@ -454,12 +618,11 @@ export default function UsersPage() {
         {(err || ok) && (
           <div className="mt-3">
             {err && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
-            {ok  && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+            {ok  && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
           </div>
         )}
       </div>
 
-      {/* Admin view: read-only assigned inventories */}
       {isAdmin && (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-4">
           <div className="mb-3 flex items-center gap-2 text-slate-700">
@@ -480,7 +643,6 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Superadmin table (server-paginated) */}
       {isSuper && (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/70 backdrop-blur">
           <div className="grid grid-cols-[1.6fr_1.2fr_.7fr_.9fr_.7fr] items-center gap-3 border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -515,13 +677,13 @@ export default function UsersPage() {
                     <div className="text-xs text-slate-500">{prettyDate(u.createdAt)}</div>
                     <div className="flex justify-end gap-2">
                       <button
-                        onClick={()=> openEdit(u)}
+                        onClick={() => { setEditRow(u); setModalOpen(true); }}
                         className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
                       >
                         <Pencil size={14}/> Edit
                       </button>
                       <button
-                        onClick={()=> askDeleteUser(u)}
+                        onClick={() => askDeleteUser(u)}
                         className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
                       >
                         <Trash2 size={14}/> Delete
@@ -536,12 +698,12 @@ export default function UsersPage() {
 
               <div className="flex items-center justify-between px-4 pb-3 text-xs text-slate-500">
                 <div>
-                  Showing {filtered.length} of {Math.min(PAGE_SIZE, users.length)} on this page • Total users: {totalCount}
+                  Showing {filtered.length} on this page • Total users: {totalCount}
                 </div>
                 <Pager
                   page={page}
-                  pages={pages}
-                  onPage={(p)=> setPage(Math.max(1, Math.min(pages, p)))}
+                  pages={totalPages}
+                  onPage={(p)=> setPage(Math.max(1, Math.min(totalPages, p)))}
                 />
               </div>
             </>
@@ -549,31 +711,44 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Modal (superadmin only) */}
-      {isSuper && (
-        <FormModal
-          title={editRow ? `Edit User: ${editRow.fullname}` : 'New User'}
+      { (isSuper) && (
+        <UserFormModal
           open={modalOpen}
-          onClose={closeModal}
-          fields={editRow ? EDIT_FIELDS : CREATE_FIELDS}
-          initial={
-            editRow
-              ? { fullname: editRow.fullname, email: editRow.email, role: editRow.role }
-              : { role: 'admin' } // default role is Admin; driver removed
-          }
-          onSubmit={handleSubmit}
+          initial={editRow}
+          isSuper={isSuper}
+          inventories={inventories}
+          onClose={() => { setModalOpen(false); setEditRow(null); }}
+          onSubmit={async (body) => {
+            try {
+              if (editRow?.id) await updateUser(editRow.id, body);
+              else await createUser(body);
+            } catch (e) {
+              // error shown as global notice
+            }
+          }}
         />
       )}
 
-      {/* Custom confirm delete */}
-      <ConfirmDeleteModal
-        open={confirmOpen}
-        user={confirmTarget}
-        status={confirmStatus}
-        message={confirmMsg}
-        onCancel={() => setConfirmOpen(false)}
-        onConfirm={() => performDeleteUser(confirmTarget)}
-      />
+      {confirmOpen && (
+        <div className="fixed inset-0 z-[85] grid place-items-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40" onClick={() => setConfirmOpen(false)} />
+          <div className="relative w-[min(520px,96vw)] rounded-2xl border bg-white shadow-2xl">
+            <div className={`flex items-center justify-between px-5 py-4 bg-slate-900 text-white`}>
+              <div className="font-semibold">Confirm deletion</div>
+              <button onClick={() => setConfirmOpen(false)} className="rounded-lg p-2 text-slate-200 hover:bg-white/10"><XIcon /></button>
+            </div>
+            <div className="px-5 py-4">
+              <div>You are about to delete user <strong>{confirmTarget?.fullname ?? '—'}</strong>. This action cannot be undone.</div>
+              <div className="mt-3 text-sm text-slate-500">{confirmMsg}</div>
+            </div>
+            <div className="flex justify-end gap-2 border-t px-5 py-3">
+              <button onClick={() => setConfirmOpen(false)} className="rounded-xl border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={() => { performDeleteUser(confirmTarget); setConfirmOpen(false); }} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

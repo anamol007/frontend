@@ -3,7 +3,7 @@ import ProtectedRoute from './routes/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
 import DashboardHome from './pages/DashboardHome';
 
-
+// ... (other imports remain the same)
 import Login from './pages/Login';
 import UsersPage from './pages/UsersPage';
 import ProductsPage from './pages/ProductsPage';
@@ -24,6 +24,18 @@ export default function App(){
   return (
     <BrowserRouter>
       <Routes>
+        
+        {/* NEW REDIRECT: Root path redirects to Dashboard (if authenticated) */}
+        {/* NOTE: The ProtectedRoute component is responsible for checking auth state. */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Navigate to="/dashboard" replace />
+            </ProtectedRoute>
+          }
+        />
+
         {/* PUBLIC */}
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -53,7 +65,7 @@ export default function App(){
           <Route path="customers/:id" element={<CustomerProfilePage />} />
         </Route>
 
-        {/* fallback */}
+        {/* fallback (for any other unmatched path) */}
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>

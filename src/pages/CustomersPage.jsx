@@ -115,7 +115,7 @@ export default function CustomersPage() {
   async function fetchAll() {
     setLoading(true); setErr(''); setOk('');
     try {
-      const r = await api.get('/customers');
+      const r = await api.get('/customers', { params: { page: 1, limit: 1000 } }); // fetch many for local paging fallback
       const data = r?.data?.data ?? r?.data ?? [];
       setRows(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -125,22 +125,41 @@ export default function CustomersPage() {
     }
   }
 
-  // server-side search (debounced)
+  // server-side search with debounce
   useEffect(() => {
+    // when query changes, debounce the server request
+    // if query is empty, fall back to fetchAll()
+    const delay = 350;
+    let mounted = true;
     const t = setTimeout(async () => {
-      if (!q.trim()) { fetchAll(); return; }
-      setLoading(true); setErr(''); setOk('');
+      if (!mounted) return;
+      const qTrim = q.trim();
+      if (!qTrim) {
+        // empty query -> fetch all (local)
+        await fetchAll();
+        setPage(1);
+        return;
+      }
+
+      setLoading(true);
+      setErr('');
       try {
-        const r = await api.get('/customers/search', { params: { query: q.trim() } });
-        const data = r?.data?.data ?? r?.data ?? [];
+        // call server search endpoint (server-side)
+        const res = await api.get('/customers/search', { params: { query: qTrim, page: 1, limit: 1000 } });
+        const data = res?.data?.data ?? res?.data ?? [];
         setRows(Array.isArray(data) ? data : []);
+        setPage(1);
       } catch (e) {
         setErr(e?.response?.data?.message || e?.message || 'Search failed');
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
-    }, 350);
-    return () => clearTimeout(t);
+    }, delay);
+
+    return () => {
+      mounted = false;
+      clearTimeout(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
@@ -242,9 +261,9 @@ export default function CustomersPage() {
 
   /* ----- Navigation to profile ----- */
   const openProfile = (id) => {
-  if (!id) return;
-  navigate(`/dashboard/customers/${id}`); // ✅ fixed absolute path
-};
+    if (!id) return;
+    navigate(`/dashboard/customers/${id}`); // ✅ fixed absolute path
+  };
 
   return (
     <div className="space-y-5 bg-gradient-to-br from-slate-50 via-indigo-50 to-emerald-50/40">
