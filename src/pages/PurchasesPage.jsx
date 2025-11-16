@@ -1,25 +1,117 @@
 // src/pages/PurchasesPage.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
-  Search, Plus, RefreshCw, Printer, X, Pencil, Trash2, Banknote, Calendar, FileText
+  Search,
+  Plus,
+  RefreshCw,
+  Printer,
+  X,
+  Pencil,
+  Trash2,
+  Banknote,
+  Calendar,
+  FileText,
 } from "lucide-react";
 import { api } from "../utils/api";
 
-/* ---------- tiny helpers ---------- */
+/* --------------------------- date formatting --------------------------- */
+function ordinal(n) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function fmtPrettyDate(input) {
+  if (!input) return "—";
+  const d = new Date(input);
+  if (Number.isNaN(+d)) return "—";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${ordinal(d.getDate())} ${months[d.getMonth()]}, ${d.getFullYear()}`;
+}
+/* keep ISO helper for date inputs */
 const formatDateInput = (iso) => {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(+d)) return "";
   return d.toISOString().slice(0, 10);
 };
-const fmtPretty = (iso) => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(+d)) return "—";
-  return d.toLocaleDateString();
-};
+
+/* --------------------------- small UI helpers --------------------------- */
 function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200" }) {
   return <span className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium ${tone}`}>{children}</span>;
+}
+
+/* ---------- SearchableSelect (simple) ---------- */
+function SearchableSelect({ value, onChange, options = [], placeholder = "Select…", className = "", disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const opts = useMemo(() => {
+    return options.map(o => {
+      if (typeof o === "string" || typeof o === "number") return { value: o, label: String(o) };
+      return { value: o.value ?? o.id ?? o, label: o.label ?? o.name ?? String(o.value ?? o.id ?? o) };
+    });
+  }, [options]);
+
+  const selected = opts.find(o => String(o.value) === String(value)) ?? null;
+  const filtered = useMemo(() => {
+    const s = (q || "").toLowerCase().trim();
+    if (!s) return opts;
+    return opts.filter(it => (it.label || "").toLowerCase().includes(s) || String(it.value).toLowerCase().includes(s));
+  }, [opts, q]);
+
+  useEffect(() => {
+    const onDoc = (e) => { if (!e.target || !(e.target instanceof Element)) return; if (!e.target.closest?.(".searchable-select-root")) setOpen(false); };
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, []);
+
+  return (
+    <div className={`searchable-select-root relative ${className}`}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(v => !v)}
+        className={`w-full text-left rounded-2xl border px-3 py-2 bg-white ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+      >
+        <div className="flex items-center justify-between">
+          <div className={`truncate ${selected ? "text-slate-900" : "text-slate-400"}`}>{selected?.label ?? placeholder}</div>
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-60" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.25 8.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+          </svg>
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-50 mt-2 rounded-xl border bg-white shadow">
+          <div className="p-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                autoFocus
+                className="w-full rounded-md border px-10 py-2 text-sm outline-none"
+                placeholder="Search..."
+              />
+            </div>
+          </div>
+
+          <div className="max-h-44 overflow-auto">
+            {filtered.length === 0 && <div className="p-3 text-sm text-gray-500">No options</div>}
+            {filtered.map((opt) => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => { onChange(opt.value); setOpen(false); setQ(""); }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ---------- Confirm dialog ---------- */
@@ -28,8 +120,8 @@ function ConfirmDialog({ open, title="Are you sure?", message, confirmLabel="Con
   const toneBtn = tone === "rose" ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-600 hover:bg-indigo-700";
   return (
     <div className="fixed inset-0 z-[95] grid place-items-center">
-      <div className="absolute inset-0 bg-slate-900/45" onClick={onClose} />
-      <div className="relative w-[min(720px,94vw)] rounded-2xl border bg-white shadow-2xl">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative w-[min(720px,94vw)] rounded-2xl border bg-white shadow-lg">
         <div className="flex items-center justify-between border-b px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">{title}</h3>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={16} /></button>
@@ -44,10 +136,10 @@ function ConfirmDialog({ open, title="Are you sure?", message, confirmLabel="Con
   );
 }
 
-/* ---------- Print helpers ---------- */
+/* ---------- Print helpers (use fmtPrettyDate) ---------- */
 function buildPrintablePurchaseHTML(purchase) {
   const id = purchase.id;
-  const when = fmtPretty(purchase.purchaseDate || purchase.createdAt);
+  const when = fmtPrettyDate(purchase.purchaseDate || purchase.createdAt);
   const inventory = purchase.inventory || {};
   const supplier = purchase.supplier || {};
   const items = (purchase.purchaseItems || []).map(it => ({
@@ -105,10 +197,10 @@ function printHTMLInIframe(html) {
   setTimeout(triggerPrint, 300);
 }
 
-/* ---------- small Plus icon component ---------- */
+/* ---------- small Plus icon ---------- */
 function PlusSmall() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M12 5v14M5 12h14" /></svg>; }
 
-/* ---------- Purchase Modal (create / edit) ---------- */
+/* ---------- Purchase Modal ---------- */
 function PurchaseModal({ open, title="Create Purchase", inventories = [], suppliers = [], products = [], units = [], initial = null, onClose, onSubmit }) {
   const emptyItem = { productId: "", unitId: "", quantity: "", rate: "" };
   const [form, setForm] = useState({
@@ -120,7 +212,6 @@ function PurchaseModal({ open, title="Create Purchase", inventories = [], suppli
     items: [ { ...emptyItem } ]
   });
 
-  // populate initial
   useEffect(() => {
     if (!open) return;
     if (initial) {
@@ -150,7 +241,6 @@ function PurchaseModal({ open, title="Create Purchase", inventories = [], suppli
     }
   }, [open, initial]);
 
-  // preview totals (client-side) — MUST be declared unconditionally (hooks rules)
   const preview = useMemo(() => {
     const items = (form.items || []).map(it => {
       const q = Number(it.quantity || 0);
@@ -164,7 +254,6 @@ function PurchaseModal({ open, title="Create Purchase", inventories = [], suppli
     return { items, sub: sub.toFixed(2), tax: tax.toFixed(2), grand: grand.toFixed(2) };
   }, [form.items, form.isTaxable]);
 
-  // Important: do NOT early-return before hooks (we already used hooks above).
   if (!open) return null;
 
   const setField = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -209,13 +298,18 @@ function PurchaseModal({ open, title="Create Purchase", inventories = [], suppli
     onSubmit(payload);
   };
 
+  const invOptions = inventories.map(i => ({ value: i.id, label: i.inventoryName || i.name || `#${i.id}` }));
+  const supOptions = suppliers.map(s => ({ value: s.id, label: s.name }));
+  const prodOptions = products.map(p => ({ value: p.id, label: p.productName || p.name || `#${p.id}` }));
+  const unitOptions = units.map(u => ({ value: u.id, label: u.name || u.unitName || `#${u.id}` }));
+
   return (
     <div className="fixed inset-0 z-[96]">
-      <div className="absolute inset-0 bg-slate-900/45" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 w-[min(980px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-auto max-h-[90vh] rounded-2xl border bg-white shadow-2xl">
-        <div className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white rounded-t-2xl">
-          <div className="text-lg font-semibold">{title}</div>
-          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10"><X size={18} /></button>
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[min(980px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-auto max-h-[90vh] rounded-2xl border bg-white shadow-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div className="text-lg font-semibold text-slate-900">{title}</div>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X size={18} /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
@@ -236,17 +330,21 @@ function PurchaseModal({ open, title="Create Purchase", inventories = [], suppli
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-slate-700">Inventory *</label>
-              <select required value={form.inventoryId} onChange={e=>setField("inventoryId", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                <option value="">Select inventory…</option>
-                {inventories.map(i=> <option key={i.id} value={i.id}>{i.inventoryName || i.name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.inventoryId}
+                onChange={(v)=>setField("inventoryId", v)}
+                options={invOptions}
+                placeholder="Select inventory…"
+              />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-700">Supplier *</label>
-              <select required value={form.supplierId} onChange={e=>setField("supplierId", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                <option value="">Select supplier…</option>
-                {suppliers.map(s=> <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.supplierId}
+                onChange={(v)=>setField("supplierId", v)}
+                options={supOptions}
+                placeholder="Select supplier…"
+              />
             </div>
           </div>
 
@@ -262,18 +360,9 @@ function PurchaseModal({ open, title="Create Purchase", inventories = [], suppli
             <div className="space-y-3">
               {form.items.map((it, idx)=>(
                 <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_80px] gap-3 items-center">
-                  <select required value={it.productId} onChange={e=>setItem(idx,"productId", e.target.value)} className="rounded-2xl border px-3 py-2">
-                    <option value="">Product *</option>
-                    {products.map(p=> <option key={p.id} value={p.id}>{p.productName}</option>)}
-                  </select>
-
-                  <select required value={it.unitId} onChange={e=>setItem(idx,"unitId", e.target.value)} className="rounded-2xl border px-3 py-2">
-                    <option value="">Unit *</option>
-                    {units.map(u=> <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
-
+                  <SearchableSelect value={it.productId} onChange={(v)=>setItem(idx,"productId", v)} options={prodOptions} placeholder="Product *" />
+                  <SearchableSelect value={it.unitId} onChange={(v)=>setItem(idx,"unitId", v)} options={unitOptions} placeholder="Unit *" />
                   <input required type="number" min="0" step="0.01" placeholder="Qty *" value={it.quantity} onChange={e=>setItem(idx,"quantity", e.target.value)} className="rounded-2xl border px-3 py-2" />
-
                   <div className="flex items-center gap-2">
                     <input required type="number" min="0" step="0.01" placeholder="Rate *" value={it.rate} onChange={e=>setItem(idx,"rate", e.target.value)} className="rounded-2xl border px-3 py-2 w-full" />
                     <button type="button" onClick={()=>removeItem(idx)} className="rounded-full bg-rose-500 p-2 text-white"><Trash2 size={14}/></button>
@@ -318,6 +407,7 @@ export default function PurchasesPage() {
   const [ok, setOk] = useState("");
 
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [sort, setSort] = useState("createdAt");
   const [order, setOrder] = useState("DESC");
 
@@ -328,6 +418,11 @@ export default function PurchasesPage() {
   const [targetRow, setTargetRow] = useState(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptPurchase, setReceiptPurchase] = useState(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 350);
+    return () => clearTimeout(t);
+  }, [q]);
 
   async function fetchMe(){ try { const r = await api.get("/users/verify-token"); const u = r?.data?.data?.user || r?.data?.user || r?.data; setMe(u || null); } catch { setMe(null); } }
   useEffect(()=>{ fetchMe(); }, []);
@@ -353,7 +448,7 @@ export default function PurchasesPage() {
     setLoading(true); setErr(""); setOk("");
     try {
       const params = { page: p, limit: perPage };
-      if (q) params.search = q;
+      if (debouncedQ) params.search = debouncedQ;
       if (sort) params.sort = sort;
       if (order) params.order = order;
 
@@ -385,9 +480,9 @@ export default function PurchasesPage() {
     } finally {
       setLoading(false);
     }
-  }, [perPage, q, sort, order]);
+  }, [perPage, debouncedQ, sort, order]);
 
-  useEffect(()=>{ setPage(1); fetchPurchases(1); }, [q, sort, order, fetchPurchases]);
+  useEffect(()=>{ setPage(1); fetchPurchases(1); }, [debouncedQ, sort, order, fetchPurchases]);
   useEffect(()=>{ fetchPurchases(page); }, [page, fetchPurchases]);
 
   async function handleSubmit(payload) {
@@ -467,7 +562,7 @@ export default function PurchasesPage() {
           </button>
 
           {isSuper && (
-            <button onClick={()=>{ setEditRow(null); setOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">
+            <button onClick={()=>{ setEditRow(null); setOpen(true); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white">
               <Plus size={16} /> New Purchase
             </button>
           )}
@@ -501,7 +596,7 @@ export default function PurchasesPage() {
 
                       <h3 className="mt-3 text-base font-semibold text-slate-900">{supplierName}</h3>
                       <div className="mt-2 text-sm text-slate-600">
-                        <div className="flex items-center gap-2"><Calendar size={14} /> <span>{fmtPretty(p.purchaseDate || p.createdAt)}</span></div>
+                        <div className="flex items-center gap-2"><Calendar size={14} /> <span>{fmtPrettyDate(p.purchaseDate || p.createdAt)}</span></div>
                         <div className="flex items-center gap-2 mt-1"><span className="truncate">{inventoryName}</span></div>
                         <div className="mt-1 text-xs text-slate-500">{itemCount} item(s)</div>
                       </div>
@@ -583,7 +678,7 @@ export default function PurchasesPage() {
 
       {receiptOpen && receiptPurchase && (
         <div className="fixed inset-0 z-[97] grid place-items-center">
-          <div className="absolute inset-0 bg-slate-900/45" onClick={() => setReceiptOpen(false)} />
+          <div className="absolute inset-0 bg-black/30" onClick={() => setReceiptOpen(false)} />
           <div className="relative w-[min(880px,94vw)] max-h-[90vh] overflow-auto rounded-2xl border bg-white">
             <div className="flex items-center justify-between border-b px-5 py-4">
               <h3 className="text-base font-semibold text-slate-900">Purchase</h3>
@@ -598,7 +693,7 @@ export default function PurchasesPage() {
                 <div>
                   <div className="text-xs text-slate-500">Bill</div>
                   <div className="text-xl font-semibold text-slate-900">#{receiptPurchase.billNumber || receiptPurchase.id}</div>
-                  <div className="text-sm text-slate-600">{fmtPretty(receiptPurchase.purchaseDate || receiptPurchase.createdAt)}</div>
+                  <div className="text-sm text-slate-600">{fmtPrettyDate(receiptPurchase.purchaseDate || receiptPurchase.createdAt)}</div>
                 </div>
 
                 <div className="text-right">

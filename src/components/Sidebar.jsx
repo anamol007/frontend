@@ -154,8 +154,6 @@ export default function Sidebar() {
               <Item to="/dashboard/inventories" icon={Map} label="Inventories" nested />
               <Item to="/dashboard/stock" icon={Boxes} label="Stock" nested />
               <Item to="/dashboard/purchases" icon={Boxes} label="Purchases" nested />
-              {/* transfers could be toggled on if you want */}
-              <Item to="/dashboard/transfers" icon={ArrowLeftRight} label="Transfers" nested />
             </CollapsibleSection>
           </div>
         </div>
@@ -177,7 +175,6 @@ export default function Sidebar() {
           <div className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Reports</div>
           <div className="mt-2 px-2">
             <Item to="/dashboard/summary" icon={Gauge} label="Summary" />
-            <Item to="/dashboard/reports" icon={ClipboardList} label="Reports" />
           </div>
         </div>
       </div>

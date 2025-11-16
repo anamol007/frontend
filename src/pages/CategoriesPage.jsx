@@ -1,12 +1,11 @@
 // src/pages/CategoriesPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus, Pencil, Trash2, Search, RefreshCw, Layers, Tags,
   ArrowUpAZ, ArrowDownAZ, ArrowUp01, ArrowDown10, ShieldAlert, X
 } from "lucide-react";
 import { api } from "../utils/api";
 
-/* ---------- helpers ---------- */
 const slugify = (s) =>
   s?.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "";
 
@@ -20,7 +19,21 @@ function pickArray(root) {
   return [];
 }
 
-/* ---------- Simple modal ---------- */
+/* --------------------------- date formatting ---------------------------- */
+function ordinal(n) {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function fmtPrettyDate(input) {
+  if (!input) return '—';
+  const d = new Date(input);
+  if (Number.isNaN(+d)) return '—';
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${ordinal(d.getDate())} ${months[d.getMonth()]}, ${d.getFullYear()}`;
+}
+
+/* ------------------------------ UI bits -------------------------------- */
 function SimpleModal({ title, open, onClose, onSubmit, children, submitLabel = "Save" }) {
   if (!open) return null;
   return (
@@ -52,7 +65,6 @@ function SimpleModal({ title, open, onClose, onSubmit, children, submitLabel = "
   );
 }
 
-/* ---------- Confirm Delete modal ---------- */
 function ConfirmDeleteModal({ open, name, busy, error, onCancel, onConfirm }) {
   if (!open) return null;
   return (
@@ -61,10 +73,10 @@ function ConfirmDeleteModal({ open, name, busy, error, onCancel, onConfirm }) {
       <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[520px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/95 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)]">
         <div className="flex items-center justify-between rounded-t-3xl bg-gradient-to-br from-rose-600 to-rose-700 px-5 py-4 text-white">
           <div className="flex items-center gap-2 font-semibold">
-            <ShieldAlert size={18}/> Confirm deletion
+            <ShieldAlert size={18} /> Confirm deletion
           </div>
           <button onClick={onCancel} className="rounded-lg p-1.5 hover:bg-white/10">
-            <X size={18}/>
+            <X size={18} />
           </button>
         </div>
 
@@ -93,7 +105,7 @@ function ConfirmDeleteModal({ open, name, busy, error, onCancel, onConfirm }) {
             disabled={busy}
             className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
           >
-            <Trash2 size={16}/> {busy ? "Deleting…" : "Delete"}
+            <Trash2 size={16} /> {busy ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>
@@ -101,7 +113,6 @@ function ConfirmDeleteModal({ open, name, busy, error, onCancel, onConfirm }) {
   );
 }
 
-/* ---------- Stat badge ---------- */
 function StatBadge({ icon: Icon, label, value, tone = "indigo" }) {
   const tones = {
     indigo: {
@@ -136,14 +147,78 @@ function StatBadge({ icon: Icon, label, value, tone = "indigo" }) {
   );
 }
 
-/* ---------- Page ---------- */
+function SearchableSelect({ value, onChange, options = [], placeholder = "Select…" }) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => String(o).toLowerCase().includes(q));
+  }, [filter, options]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        className="w-full rounded-lg border px-3 py-2 text-sm text-left flex items-center justify-between bg-white"
+      >
+        <span className="truncate">{value || <span className="text-gray-400">{placeholder}</span>}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.25 8.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-40 mt-2 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+          <div className="p-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                autoFocus
+                className="w-full rounded-md border px-10 py-2 text-sm outline-none"
+                placeholder="Search..."
+              />
+            </div>
+          </div>
+
+          <div className="max-h-40 overflow-auto">
+            {filtered.length === 0 && <div className="p-3 text-sm text-gray-500">No options</div>}
+            {filtered.map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => { onChange(opt); setOpen(false); setFilter(""); }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------- Page ---------------------------------- */
 export default function CategoriesPage() {
-  // auth
   const [me, setMe] = useState(null);
   const isSuper = me?.role === "superadmin";
   const isAdmin = me?.role === "admin";
 
-  // server-side pagination
   const PER_PAGE = 10;
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -151,37 +226,31 @@ export default function CategoriesPage() {
   const [hasNext, setHasNext] = useState(false);
   const [hasPrev, setHasPrev] = useState(false);
 
-  // query / sort (sent to backend)
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
 
-  // modals + forms
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [addForm, setAddForm] = useState({ name: "", slug: "", categoryCol: "GRAIN" });
   const [editForm, setEditForm] = useState({ name: "", slug: "", categoryCol: "GRAIN" });
 
-  // data & status
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // stats
   const [stats, setStats] = useState([
     { icon: Tags, label: "Categories", value: "—", tone: "indigo" },
     { icon: Layers, label: "Items", value: "—", tone: "emerald" },
     { icon: RefreshCw, label: "Synced", value: "100%", tone: "indigo" },
   ]);
 
-  // delete confirm modal state
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmRow, setConfirmRow] = useState(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmErr, setConfirmErr] = useState("");
 
-  // auth
   async function fetchMe() {
     try {
       const r = await api.get("/users/verify-token");
@@ -192,7 +261,6 @@ export default function CategoriesPage() {
     }
   }
 
-  // load categories with server-side pagination
   async function fetchCategories(nextPage = 1) {
     setLoading(true);
     setError(null);
@@ -230,11 +298,9 @@ export default function CategoriesPage() {
     }
   }
 
-  // bootstrap & refetch on sort/filter changes
   useEffect(() => { fetchMe(); }, []);
   useEffect(() => { fetchCategories(1); }, [query, sortKey, sortDir]);
 
-  // actions
   const onEdit = (row) => {
     setEditing(row || {});
     setEditForm({
@@ -260,7 +326,6 @@ export default function CategoriesPage() {
       await api.delete(`/categories/${confirmRow.id}`);
       setConfirmOpen(false);
       setConfirmRow(null);
-      // if last item on the page was removed, go back a page
       const goBack = categories.length === 1 && page > 1;
       await fetchCategories(goBack ? page - 1 : page);
     } catch (e) {
@@ -270,10 +335,8 @@ export default function CategoriesPage() {
     }
   };
 
-  /* ---------- render ---------- */
   return (
     <div className="px-4 sm:px-6 lg:px-8 py-6">
-      {/* Header */}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Categories</h1>
         <div className="flex items-center gap-2">
@@ -296,7 +359,6 @@ export default function CategoriesPage() {
         </div>
       </div>
 
-      {/* Sort */}
       <div className="mb-4 flex items-center gap-2">
         <div className="inline-flex rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           <button
@@ -330,7 +392,6 @@ export default function CategoriesPage() {
         </button>
       </div>
 
-      {/* Table */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="hidden md:grid grid-cols-[minmax(220px,1.2fr)_120px_180px_200px] items-center border-b border-gray-200 bg-gray-50 px-4 py-3 text-xs font-semibold text-gray-600">
           <div>Name</div>
@@ -353,7 +414,6 @@ export default function CategoriesPage() {
                 key={row.id}
                 className="md:grid md:grid-cols-[minmax(220px,1.2fr)_120px_180px_200px] md:items-center"
               >
-                {/* Name */}
                 <div className="flex items-center justify-between gap-3 px-4 py-3 md:py-4">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
@@ -372,7 +432,6 @@ export default function CategoriesPage() {
                     </div>
                   </div>
 
-                  {/* Mobile actions */}
                   <div className="flex items-center gap-2 md:hidden">
                     <button
                       onClick={() => onEdit(row)}
@@ -392,19 +451,16 @@ export default function CategoriesPage() {
                   </div>
                 </div>
 
-                {/* Items */}
                 <div className="px-4 pb-2 md:py-4 md:text-center">
                   <span className="inline-flex min-w-[3ch] items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-700">
                     {itemCount}
                   </span>
                 </div>
 
-                {/* Updated */}
                 <div className="px-4 pb-3 text-sm text-gray-600 md:py-4">
-                  {row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "—"}
+                  {row.updatedAt ? fmtPrettyDate(row.updatedAt) : "—"}
                 </div>
 
-                {/* Desktop actions */}
                 <div className="hidden px-4 py-3 md:flex md:items-center md:justify-end gap-2">
                   <button
                     onClick={() => onEdit(row)}
@@ -428,7 +484,6 @@ export default function CategoriesPage() {
         </ul>
       </div>
 
-      {/* Pagination — uses backend flags */}
       <div className="mt-4 flex items-center justify-center gap-2">
         <button
           onClick={() => fetchCategories(page - 1)}
@@ -470,7 +525,6 @@ export default function CategoriesPage() {
         </button>
       </div>
 
-      {/* Add Modal */}
       <SimpleModal
         title="New Category"
         open={isAddOpen}
@@ -504,18 +558,17 @@ export default function CategoriesPage() {
               placeholder="Category name (e.g. Rice, Wheat)"
             />
           </div>
+
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Type (categoryCol)</label>
-            <select
+            <SearchableSelect
               value={addForm.categoryCol}
-              onChange={(e) => setAddForm((f) => ({ ...f, categoryCol: e.target.value }))}
-              className="w-full rounded-lg border px-3 py-2 text-sm bg-white"
-            >
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-            </select>
+              onChange={(val) => setAddForm((f) => ({ ...f, categoryCol: val }))}
+              options={CATEGORY_OPTIONS}
+              placeholder="Select type"
+            />
           </div>
+
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Slug (optional)</label>
             <input
@@ -528,7 +581,6 @@ export default function CategoriesPage() {
         </div>
       </SimpleModal>
 
-      {/* Edit Modal */}
       <SimpleModal
         title={`Edit: ${editing?.name ?? ""}`}
         open={isEditOpen}
@@ -561,18 +613,17 @@ export default function CategoriesPage() {
               placeholder="Category name (e.g. Rice, Wheat)"
             />
           </div>
+
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Type (categoryCol)</label>
-            <select
+            <SearchableSelect
               value={editForm.categoryCol}
-              onChange={(e) => setEditForm((f) => ({ ...f, categoryCol: e.target.value }))}
-              className="w-full rounded-lg border px-3 py-2 text-sm bg-white"
-            >
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-            </select>
+              onChange={(val) => setEditForm((f) => ({ ...f, categoryCol: val }))}
+              options={CATEGORY_OPTIONS}
+              placeholder="Select type"
+            />
           </div>
+
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Slug (optional)</label>
             <input
@@ -585,7 +636,6 @@ export default function CategoriesPage() {
         </div>
       </SimpleModal>
 
-      {/* Custom Delete Confirm */}
       <ConfirmDeleteModal
         open={confirmOpen}
         name={confirmRow?.name}

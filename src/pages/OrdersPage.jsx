@@ -1,10 +1,11 @@
 // src/pages/OrdersPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactDOM from "react-dom";
 import { api } from "../utils/api";
 import {
   Search, Plus, RefreshCw, Package, User2, Building2,
   Banknote, CalendarClock, Pencil, Trash2, BadgeCheck,
-  ChevronLeft, ChevronRight, X, FileText, Printer
+  X, FileText, Printer
 } from "lucide-react";
 
 /* -------------------- constants -------------------- */
@@ -72,7 +73,145 @@ function ConfirmDialog({ open, title = "Are you sure?", message, confirmLabel = 
   );
 }
 
-/* -------------------- Order Modal (embedded, supports multiple items) -------------------- */
+/* -------------------- SearchableSelect (portal) --------------------
+  Renders dropdown into document.body so it's never clipped by parent overflow.
+  Props:
+    - value: current value
+    - onChange(value)
+    - options: [{ value, label }]
+    - placeholder
+    - required (boolean)
+    - disabled (boolean)
+*/
+function SearchableSelect({ value, onChange, options = [], placeholder = "Select…", required = false, disabled = false, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [highlight, setHighlight] = useState(0);
+  const toggleRef = useRef(null);
+  const portalRef = useRef(null);
+
+  // compute filtered list
+  const list = useMemo(() => {
+    const term = String(filter || "").trim().toLowerCase();
+    if (!term) return options;
+    return options.filter(o => (o.label || "").toLowerCase().includes(term));
+  }, [options, filter]);
+
+  // close on outside click (also closes portal)
+  useEffect(() => {
+    function onDoc(e) {
+      if (toggleRef.current && toggleRef.current.contains(e.target)) return;
+      if (portalRef.current && portalRef.current.contains(e.target)) return;
+      setOpen(false);
+      setFilter("");
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // keyboard nav
+  function onKey(e) {
+    if (!open) {
+      if (e.key === "ArrowDown") { setOpen(true); e.preventDefault(); }
+      return;
+    }
+    if (e.key === "ArrowDown") { setHighlight(h => Math.min(h + 1, list.length - 1)); e.preventDefault(); }
+    if (e.key === "ArrowUp") { setHighlight(h => Math.max(h - 1, 0)); e.preventDefault(); }
+    if (e.key === "Enter") {
+      const sel = list[highlight];
+      if (sel) { onChange(sel.value); setOpen(false); setFilter(""); }
+      e.preventDefault();
+    }
+    if (e.key === "Escape") { setOpen(false); setFilter(""); e.preventDefault(); }
+  }
+
+  // compute portal position relative to toggle
+  const [portalStyle, setPortalStyle] = useState({ top: 0, left: 0, width: 0 });
+  useEffect(() => {
+    if (!open) return;
+    const el = toggleRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const top = rect.bottom + window.scrollY + 6; // small gap
+    const left = rect.left + window.scrollX;
+    const width = rect.width;
+    setPortalStyle({ top, left, width });
+    // recalc on resize/scroll
+    function onResize() {
+      const r = el.getBoundingClientRect();
+      setPortalStyle({ top: r.bottom + window.scrollY + 6, left: r.left + window.scrollX, width: r.width });
+    }
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onResize, true);
+    return () => { window.removeEventListener("resize", onResize); window.removeEventListener("scroll", onResize, true); };
+  }, [open]);
+
+  const selectedLabel = options.find(o => String(o.value) === String(value))?.label ?? "";
+
+  // portal content
+  const dropdown = open ? (
+    <div
+      ref={portalRef}
+      style={{ position: "absolute", top: portalStyle.top, left: portalStyle.left, width: portalStyle.width, zIndex: 9999 }}
+      className="rounded-2xl"
+    >
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-lg">
+        <div className="px-3 py-2">
+          <input
+            autoFocus
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none"
+            placeholder="Type to search..."
+            value={filter}
+            onChange={(e) => { setFilter(e.target.value); setHighlight(0); }}
+            onKeyDown={onKey}
+          />
+        </div>
+        <div className="max-h-48 overflow-auto">
+          {list.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-slate-500">No results</div>
+          ) : (
+            list.map((opt, i) => (
+              <div
+                key={opt.value + i}
+                onMouseEnter={() => setHighlight(i)}
+                onMouseDown={(e) => { e.preventDefault(); /* keep focus */ }}
+                onClick={() => { onChange(opt.value); setOpen(false); setFilter(""); }}
+                className={`px-3 py-2 cursor-pointer ${i === highlight ? "bg-slate-100" : "hover:bg-slate-50"}`}
+              >
+                <div className="truncate text-sm text-slate-800">{opt.label}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <div ref={toggleRef} className={`relative ${className}`}>
+        <button
+          type="button"
+          onClick={() => { if (!disabled) { setOpen(o => !o); setFilter(""); } }}
+          onKeyDown={onKey}
+          className={`w-full text-left rounded-2xl border border-slate-300 bg-white px-3 py-2.5 ${disabled ? "opacity-60" : ""}`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className={`truncate ${selectedLabel ? "text-slate-900" : "text-slate-400"}`}>{selectedLabel || placeholder}</div>
+            <div className="text-slate-400 text-xs">{open ? "▲" : "▾"}</div>
+          </div>
+        </button>
+        {required && <input type="hidden" value={value || ""} required={required && !value} onChange={() => {}} />}
+      </div>
+
+      {open && typeof document !== "undefined" ? ReactDOM.createPortal(dropdown, document.body) : null}
+    </>
+  );
+}
+
+/* -------------------- Order Modal (embedded) -------------------- */
 function OrderModal({
   open,
   title = "Create Order",
@@ -92,13 +231,15 @@ function OrderModal({
     paymentMethod: "no",
     status: "",
     notes: "",
-    items: [ { ...emptyItem } ]
+    items: [{ ...emptyItem }]
   });
 
-  React.useEffect(() => {
+  const [error, setError] = useState("");
+
+  useEffect(() => {
     if (!open) return;
+    setError("");
     if (initial) {
-      // editing: fill fields using orderItems
       const items = (initial.orderItems || []).map(it => ({
         productId: it.productId,
         unit_id: it.unit_id,
@@ -110,7 +251,7 @@ function OrderModal({
         paymentMethod: initial.paymentMethod || "no",
         status: initial.status || "",
         notes: initial.notes || "",
-        items: items.length ? items : [ { ...emptyItem } ]
+        items: items.length ? items : [{ ...emptyItem }]
       });
     } else {
       setForm({
@@ -119,7 +260,7 @@ function OrderModal({
         paymentMethod: "no",
         status: "",
         notes: "",
-        items: [ { ...emptyItem } ]
+        items: [{ ...emptyItem }]
       });
     }
   }, [open, initial]);
@@ -137,12 +278,26 @@ function OrderModal({
   const removeItem = (idx) => setForm(prev => {
     const items = prev.items.slice();
     items.splice(idx, 1);
-    return { ...prev, items: items.length ? items : [ { ...emptyItem } ] };
+    return { ...prev, items: items.length ? items : [{ ...emptyItem }] };
   });
 
-  const handleSubmit = (e) => {
+  const validateAndSubmit = (e) => {
     e.preventDefault();
-    // Build payload — do NOT include rate
+    setError("");
+
+    if (!form.customerId) { setError("Customer is required."); return; }
+    if (!form.inventoryId) { setError("Inventory is required."); return; }
+
+    if (!form.items || form.items.length === 0) { setError("Please add at least one item."); return; }
+
+    for (let i = 0; i < form.items.length; i++) {
+      const it = form.items[i];
+      if (!it.productId) { setError(`Item ${i + 1}: product is required.`); return; }
+      if (!it.unit_id) { setError(`Item ${i + 1}: unit is required.`); return; }
+      const qv = Number(it.quantity || 0);
+      if (!qv || qv <= 0) { setError(`Item ${i + 1}: quantity must be a positive number.`); return; }
+    }
+
     const payload = {
       customerId: form.customerId,
       inventoryId: form.inventoryId,
@@ -155,13 +310,20 @@ function OrderModal({
         quantity: parseFloat(it.quantity || 0)
       }))
     };
+
     onSubmit(payload);
   };
+
+  // map lists to { value, label }
+  const custOpts = customers.map(c => ({ value: String(c.id), label: c.fullname || `#${c.id}` }));
+  const invOpts = inventories.map(i => ({ value: String(i.id), label: i.inventoryName || `#${i.id}` }));
+  const prodOpts = products.map(p => ({ value: String(p.id), label: p.productName || `#${p.id}` }));
+  const unitOpts = units.map(u => ({ value: String(u.id), label: u.name || `#${u.id}` }));
 
   return (
     <div className="fixed inset-0 z-[95]">
       <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 w-[min(920px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-white/30 bg-white/95 shadow-2xl">
+      <div className="absolute left-1/2 top-1/2 w-[min(920px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-visible rounded-2xl border border-white/30 bg-white/95 shadow-2xl">
         <div className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white rounded-t-2xl">
           <div className="text-lg font-semibold">{title}</div>
           <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10">
@@ -169,32 +331,30 @@ function OrderModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={validateAndSubmit} className="p-5 space-y-4">
+          {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{error}</div>}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium text-slate-700">Customer *</label>
-              <select
+              <SearchableSelect
+                value={String(form.customerId || "")}
+                onChange={(v) => setForm(prev => ({ ...prev, customerId: v }))}
+                options={custOpts}
+                placeholder="Select customer…"
                 required
-                value={form.customerId}
-                onChange={e => setForm(prev => ({ ...prev, customerId: e.target.value }))}
-                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
-              >
-                <option value="">Select customer…</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.fullname}</option>)}
-              </select>
+              />
             </div>
 
             <div>
               <label className="text-sm font-medium text-slate-700">Inventory *</label>
-              <select
+              <SearchableSelect
+                value={String(form.inventoryId || "")}
+                onChange={(v) => setForm(prev => ({ ...prev, inventoryId: v }))}
+                options={invOpts}
+                placeholder="Select inventory…"
                 required
-                value={form.inventoryId}
-                onChange={e => setForm(prev => ({ ...prev, inventoryId: e.target.value }))}
-                className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
-              >
-                <option value="">Select inventory…</option>
-                {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName}</option>)}
-              </select>
+              />
             </div>
 
             <div>
@@ -235,32 +395,28 @@ function OrderModal({
             <div className="flex items-center justify-between mb-3">
               <div className="text-slate-900 font-medium">Items</div>
               <button type="button" onClick={addItem} className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm hover:bg-slate-50">
-                <Plus size={14}/> Add item
+                <Plus size={14} /> Add item
               </button>
             </div>
 
             <div className="space-y-3">
               {form.items.map((it, idx) => (
                 <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_80px] gap-3 items-center">
-                  <select
+                  <SearchableSelect
+                    value={String(it.productId || "")}
+                    onChange={(v) => setItem(idx, "productId", v)}
+                    options={prodOpts}
+                    placeholder="Product *"
                     required
-                    value={it.productId}
-                    onChange={e => setItem(idx, "productId", e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
-                  >
-                    <option value="">Product *</option>
-                    {products.map(p => <option key={p.id} value={p.id}>{p.productName}</option>)}
-                  </select>
+                  />
 
-                  <select
+                  <SearchableSelect
+                    value={String(it.unit_id || "")}
+                    onChange={(v) => setItem(idx, "unit_id", v)}
+                    options={unitOpts}
+                    placeholder="Unit *"
                     required
-                    value={it.unit_id}
-                    onChange={e => setItem(idx, "unit_id", e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 outline-none"
-                  >
-                    <option value="">Unit *</option>
-                    {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+                  />
 
                   <input
                     required
@@ -279,7 +435,7 @@ function OrderModal({
                       <div className="font-medium">—</div>
                     </div>
                     <button type="button" onClick={() => removeItem(idx)} className="rounded-full bg-rose-500 p-2 text-white">
-                      <Trash2 size={14}/>
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
@@ -317,7 +473,7 @@ export default function OrdersPage() {
   const hasSingleInv = myInvIds.length === 1;
   const mySingleInvId = hasSingleInv ? myInvIds[0] : null;
 
-  // server-side pagination (same pattern as CategoriesPage)
+  // server-side pagination
   const PER_PAGE = 10;
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -325,16 +481,12 @@ export default function OrdersPage() {
   const [hasNext, setHasNext] = useState(false);
   const [hasPrev, setHasPrev] = useState(false);
 
-  // page rows (current page only)
   const [orders, setOrders] = useState([]);
-
-  // reference data
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [inventories, setInventories] = useState([]);
   const [units, setUnits] = useState([]);
 
-  // ui
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
@@ -346,7 +498,6 @@ export default function OrdersPage() {
   const [openModal, setOpenModal] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-  // confirm & receipt
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [targetRow, setTargetRow] = useState(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -412,15 +563,12 @@ export default function OrdersPage() {
 
       const res = await api.get("/orders/", { params });
 
-      // Preferred: res.data.pagination { currentPage, totalPages, totalCount, hasNextPage, hasPrevPage } + res.data.data
-      // Fallbacks: rows/count, data/total, top-level array, headers x-total-count
       const root = res?.data ?? {};
       const rows = Array.isArray(root.data) ? root.data
                     : Array.isArray(root.rows) ? root.rows
                     : Array.isArray(res?.data) ? res.data
                     : [];
 
-      // pagination object if present
       const p = root.pagination || {};
       let current = Number(p.currentPage ?? nextPage) || Number(nextPage);
       let tPages = Number(p.totalPages ?? 1) || 1;
@@ -428,18 +576,13 @@ export default function OrdersPage() {
       let nextFlag = Boolean(p.hasNextPage ?? (tPages > current));
       let prevFlag = Boolean(p.hasPrevPage ?? (current > 1));
 
-      // fallback: Sequelize-style
-      if ((!rows || rows.length === 0) && Array.isArray(root.rows)) {
-        // already handled above
-      } else if (Array.isArray(root.rows) && typeof root.count === "number") {
-        // Sequelize: { rows: [...], count: N }
+      if (Array.isArray(root.rows) && typeof root.count === "number") {
         tCount = Number(root.count);
         tPages = Math.max(1, Math.ceil(tCount / PER_PAGE));
         current = Number(nextPage);
         nextFlag = current < tPages;
         prevFlag = current > 1;
       } else if (Array.isArray(res?.data) && !root.pagination) {
-        // top-level array returned - try header
         const headerTotal = Number(res?.headers?.["x-total-count"] ?? 0);
         if (headerTotal > 0) {
           tCount = headerTotal;
@@ -461,24 +604,21 @@ export default function OrdersPage() {
       setHasPrev(Boolean(prevFlag));
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Error fetching orders");
-      // in case of fail, keep previous pagination state
     } finally {
       setLoading(false);
     }
   }
 
-  // initial + refetch when filters change
-  React.useEffect(() => {
-    setPage(1);
-    fetchOrders(1);
+  // debounce q changes
+  useEffect(() => {
+    const t = setTimeout(() => { setPage(1); fetchOrders(1); }, 250);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, statusFilter, invFilter]);
 
-  // page change helpers that mirror CategoriesPage style
   const goPrev = () => { if (hasPrev && page > 1) fetchOrders(page - 1); };
   const goNext = () => { if (hasNext && page < totalPages) fetchOrders(page + 1); };
 
-  // open modal handlers
   function openCreateModal() {
     if (!canCreate) { setErr("Only Admin / Super Admin can create orders"); return; }
     setEditRow(null);
@@ -490,7 +630,6 @@ export default function OrdersPage() {
     setOpenModal(true);
   }
 
-  // sanitize items (frontend only sends productId, unit_id, quantity)
   function sanitizeItems(items) {
     return (items || []).map(it => ({
       productId: it.productId,
@@ -499,7 +638,6 @@ export default function OrdersPage() {
     }));
   }
 
-  // create or update
   async function handleSubmit(payload) {
     try {
       setErr(""); setOk("");
@@ -515,7 +653,6 @@ export default function OrdersPage() {
         }
       }
 
-      // admin with single inventory -> force inventory
       if (!isSuper && hasSingleInv) payload.inventoryId = mySingleInvId;
 
       const body = {
@@ -524,7 +661,6 @@ export default function OrdersPage() {
         status: payload.status,
         paymentMethod: payload.paymentMethod,
         notes: payload.notes,
-        // do not send rate or amount — backend uses product-unit pricing
         items: itemsClean
       };
 
@@ -538,21 +674,18 @@ export default function OrdersPage() {
 
       setOpenModal(false);
       setEditRow(null);
-      // refetch current page (server decides ordering)
       fetchOrders(page);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Action failed");
     }
   }
 
-  // delete
   async function deleteNow(row) {
     if (!canEditDelete) { setErr("Only Super Admin can delete orders"); return; }
     try {
       setErr(""); setOk("");
       await api.delete(`/orders/${row.id}`);
       setOk("Order deleted");
-      // if deleting last item on page, back up a page if possible
       const goBack = orders.length === 1 && page > 1;
       await fetchOrders(goBack ? page - 1 : page);
     } catch (e) {
@@ -560,7 +693,6 @@ export default function OrdersPage() {
     }
   }
 
-  // print
   function buildPrintableReceiptHTML(order) {
     const id = order.id;
     const when = formatPrettyDate(order.orderDate || order.createdAt);
@@ -609,6 +741,7 @@ export default function OrdersPage() {
       </div>
     </body></html>`;
   }
+
   function printHTMLInIframe(html) {
     const iframe = document.createElement("iframe");
     iframe.style.position = "fixed";
@@ -644,6 +777,7 @@ export default function OrdersPage() {
     doc.close();
     setTimeout(triggerPrint, 300);
   }
+
   function printOrder(order) {
     const html = buildPrintableReceiptHTML(order);
     printHTMLInIframe(html);
@@ -822,7 +956,7 @@ export default function OrdersPage() {
         </>
       )}
 
-      {/* Order modal (embedded) */}
+      {/* Order modal */}
       <OrderModal
         open={openModal}
         title={editRow ? "Edit Order" : "Create Order"}

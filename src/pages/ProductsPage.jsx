@@ -13,12 +13,11 @@ import {
   X,
   Save,
   CheckCircle2,
-  XCircle
+  XCircle,
 } from "lucide-react";
 import { api } from "../utils/api";
 
-/* ---------- constants & helpers ---------- */
-const PAGE_SIZE = 10; // server-side page size
+const PAGE_SIZE = 10;
 
 const cls = (...a) => a.filter(Boolean).join(" ");
 const byAlpha = (get = (x) => x) =>
@@ -41,7 +40,7 @@ function RateChip({ name, rate }) {
   );
 }
 
-/* ---------- modal shells ---------- */
+/* Modal shells */
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
   return (
@@ -50,7 +49,9 @@ function Modal({ open, onClose, title, children, footer }) {
       <div className="absolute left-1/2 top-1/2 w-[min(820px,96vw)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl">
         <div className="flex items-center justify-between border-b px-5 py-4">
           <h3 className="text-lg font-semibold">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X size={18} /></button>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100">
+            <X size={18} />
+          </button>
         </div>
         <div className="max-h-[72vh] overflow-y-auto px-5 py-4">{children}</div>
         {footer && <div className="border-t px-5 py-4">{footer}</div>}
@@ -59,7 +60,6 @@ function Modal({ open, onClose, title, children, footer }) {
   );
 }
 
-/* ---------- confirm modal ---------- */
 function ConfirmModal({ open, mode = "confirm", message = "", onCancel, onConfirm, confirmLabel = "Confirm" }) {
   if (!open) return null;
   const isConfirm = mode === "confirm";
@@ -69,10 +69,16 @@ function ConfirmModal({ open, mode = "confirm", message = "", onCancel, onConfir
     <div className="fixed inset-0 z-[70]">
       <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onCancel} />
       <div className="absolute left-1/2 top-1/2 w-[min(560px,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-3xl border border-white/30 bg-white/95 shadow-[0_30px_120px_-20px_rgba(2,6,23,.55)]">
-        <div className={cls("flex items-center justify-between px-5 py-4 text-white",
-          isConfirm ? "bg-slate-900" : isSuccess ? "bg-emerald-600" : "bg-rose-600")}>
+        <div
+          className={cls(
+            "flex items-center justify-between px-5 py-4 text-white",
+            isConfirm ? "bg-slate-900" : isSuccess ? "bg-emerald-600" : "bg-rose-600"
+          )}
+        >
           <div className="font-semibold">{isConfirm ? "Confirm" : isSuccess ? "Done" : "Error"}</div>
-          <button onClick={onCancel} className="rounded-lg p-2 hover:bg-white/10"><X size={18} /></button>
+          <button onClick={onCancel} className="rounded-lg p-2 hover:bg-white/10">
+            <X size={18} />
+          </button>
         </div>
 
         <div className="px-5 py-5">
@@ -94,11 +100,17 @@ function ConfirmModal({ open, mode = "confirm", message = "", onCancel, onConfir
         <div className="flex justify-end gap-2 border-t border-white/60 bg-white/70 px-5 py-3">
           {isConfirm ? (
             <>
-              <button onClick={onCancel} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
-              <button onClick={onConfirm} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">{confirmLabel}</button>
+              <button onClick={onCancel} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                Cancel
+              </button>
+              <button onClick={onConfirm} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700">
+                {confirmLabel}
+              </button>
             </>
           ) : (
-            <button onClick={onCancel} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Close</button>
+            <button onClick={onCancel} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+              Close
+            </button>
           )}
         </div>
       </div>
@@ -106,7 +118,7 @@ function ConfirmModal({ open, mode = "confirm", message = "", onCancel, onConfir
   );
 }
 
-/* ---------- pager ---------- */
+/* Pager */
 function Pager({ page, pages, onPage }) {
   if (!pages || pages <= 1) return null;
   const canPrev = page > 1;
@@ -114,31 +126,110 @@ function Pager({ page, pages, onPage }) {
   const nums = pages <= 4 ? Array.from({ length: pages }, (_, i) => i + 1) : [1, 2, 3, 4];
   return (
     <div className="mt-6 flex items-center justify-center gap-2">
-      <button onClick={() => onPage(Math.max(1, page - 1))} disabled={!canPrev}
-        className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-40">Prev</button>
+      <button onClick={() => onPage(Math.max(1, page - 1))} disabled={!canPrev} className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-40">
+        Prev
+      </button>
 
-      {nums.map(n => (
-        <button key={n} onClick={() => onPage(n)}
-          className={`h-8 w-8 rounded-lg text-sm font-medium transition ${n === page ? 'bg-slate-900 text-white shadow' : 'border hover:bg-slate-100'}`}>
+      {nums.map((n) => (
+        <button key={n} onClick={() => onPage(n)} className={`h-8 w-8 rounded-lg text-sm font-medium transition ${n === page ? "bg-slate-900 text-white shadow" : "border hover:bg-slate-100"}`}>
           {n}
         </button>
       ))}
 
       {pages > 4 && <span className="px-2 text-slate-400">…</span>}
 
-      <button onClick={() => onPage(Math.min(pages, page + 1))} disabled={!canNext}
-        className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-40">Next</button>
+      <button onClick={() => onPage(Math.min(pages, page + 1))} disabled={!canNext} className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-40">
+        Next
+      </button>
     </div>
   );
 }
 
-/* ---------- main page ---------- */
+/* Searchable select: accepts array of strings OR array of { value, label } */
+function SearchableSelect({ value, onChange, options = [], placeholder = "Select…", className = "" }) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const normalized = useMemo(() => {
+    return options.map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+  }, [options]);
+
+  const filtered = useMemo(() => {
+    const q = (filter || "").trim().toLowerCase();
+    if (!q) return normalized;
+    return normalized.filter((o) => (o.label || "").toLowerCase().includes(q) || String(o.value).toLowerCase().includes(q));
+  }, [filter, normalized]);
+
+  const selectedLabel = useMemo(() => {
+    const found = normalized.find((o) => String(o.value) === String(value));
+    return found ? found.label : "";
+  }, [normalized, value]);
+
+  return (
+    <div className={`relative ${className}`} ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        className="w-full rounded-xl border bg-white px-3 py-2 text-left text-sm flex items-center justify-between"
+      >
+        <span className={`truncate ${!selectedLabel ? "text-gray-400" : ""}`}>{selectedLabel || placeholder}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.25 8.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-40 mt-2 max-h-60 rounded-xl border bg-white shadow-lg">
+          <div className="p-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                autoFocus
+                className="w-full rounded-md border px-10 py-2 text-sm outline-none"
+                placeholder="Search..."
+              />
+            </div>
+          </div>
+
+          <div className="max-h-44 overflow-auto">
+            {filtered.length === 0 && <div className="p-3 text-sm text-gray-500">No options</div>}
+            {filtered.map((opt) => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                  setFilter("");
+                }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Main page */
 export default function ProductsPage() {
-  // role
   const [me, setMe] = useState(null);
   const isSuper = me?.role === "superadmin";
 
-  // server state
   const [products, setProducts] = useState([]);
   const [units, setUnits] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -146,42 +237,34 @@ export default function ProductsPage() {
   const [pages, setPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
 
-  // ui
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
-  // search + debounce
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const debounceRef = useRef(null);
   const [searching, setSearching] = useState(false);
 
-  // editing/modals
   const [openEdit, setOpenEdit] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ productName: "", description: "", category_id: "" });
   const [initUnits, setInitUnits] = useState([]);
 
-  // units modal
   const [openUnits, setOpenUnits] = useState(false);
   const [unitsForProduct, setUnitsForProduct] = useState([]);
   const [unitsProduct, setUnitsProduct] = useState(null);
   const [addUnitRow, setAddUnitRow] = useState({ unit_id: "", rate: "" });
 
-  // confirm
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmMode, setConfirmMode] = useState("confirm");
   const [confirmMsg, setConfirmMsg] = useState("");
   const confirmActionRef = useRef(() => {});
 
-  // abort controller ref for cancelling in-flight requests
   const fetchControllerRef = useRef(null);
-
-  // search keys to send (backend helper will examine req.query)
   const searchKeys = ["q", "query", "search", "searchTerm"];
 
-  /* ---------- bootstrap: user + static lists ---------- */
+  /* bootstrap */
   useEffect(() => {
     let mounted = true;
     async function boot() {
@@ -193,30 +276,33 @@ export default function ProductsPage() {
         // ignore
       }
 
-      // fetch units & categories (non-paged)
       try {
         const [uRes, cRes] = await Promise.allSettled([api.get("/units"), api.get("/categories")]);
         if (!mounted) return;
         const pick = (r) => {
           if (!r || r.status !== "fulfilled") return [];
           const root = r.value?.data ?? r.value;
-          return Array.isArray(root.data) ? root.data : (Array.isArray(root) ? root : (Array.isArray(r.value?.data) ? r.value.data : []));
+          return Array.isArray(root.data) ? root.data : Array.isArray(root) ? root : [];
         };
         setUnits(pick(uRes));
         setCategories(pick(cRes));
-      } catch (e) {
+      } catch {
         // ignore
       }
     }
     boot();
-    return () => { mounted = false; if (fetchControllerRef.current) fetchControllerRef.current.abort(); };
+    return () => {
+      mounted = false;
+      if (fetchControllerRef.current) fetchControllerRef.current.abort();
+    };
   }, []);
 
-  /* ---------- fetch products (server-side) ---------- */
+  /* fetch products */
   async function fetchProducts(p = 1, search = debouncedQ) {
-    // cancel previous
     if (fetchControllerRef.current) {
-      try { fetchControllerRef.current.abort(); } catch {}
+      try {
+        fetchControllerRef.current.abort();
+      } catch {}
     }
     const controller = new AbortController();
     fetchControllerRef.current = controller;
@@ -225,23 +311,17 @@ export default function ProductsPage() {
     setErr("");
     try {
       const params = { page: p, limit: PAGE_SIZE };
-      if (search) {
-        // send multiple common names so backend helper picks it up
-        searchKeys.forEach(k => { params[k] = search; });
-      }
+      if (search) searchKeys.forEach((k) => (params[k] = search));
 
       const res = await api.get("/products", { params, signal: controller.signal });
-
       const root = res?.data ?? {};
 
-      // robustly pick items
-      let items = Array.isArray(root.data) ? root.data
-        : Array.isArray(root.rows) ? root.rows
-        : Array.isArray(root.items) ? root.items
-        : Array.isArray(res?.data) ? res.data
-        : [];
+      let items =
+        Array.isArray(root.data) ? root.data :
+        Array.isArray(root.rows) ? root.rows :
+        Array.isArray(root.items) ? root.items :
+        Array.isArray(res?.data) ? res.data : [];
 
-      // parse pagination metadata
       const pagination = root.pagination ?? root.meta ?? root.paging ?? root._meta ?? null;
       let pagesCount = 1;
       let total = items.length;
@@ -252,12 +332,10 @@ export default function ProductsPage() {
         total = Number(pagination.total ?? pagination.totalItems ?? pagination.count ?? total);
         currentPage = Number(pagination.page ?? pagination.currentPage ?? p);
       } else if (typeof root.count === "number" && Array.isArray(root.rows)) {
-        // Sequelize style: root.count + root.rows
         total = Number(root.count);
         pagesCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
         currentPage = Number(p);
       } else {
-        // fallback: X-Total-Count header
         const headerTotal = Number(res?.headers?.["x-total-count"] ?? 0);
         if (headerTotal > 0) {
           total = headerTotal;
@@ -267,7 +345,6 @@ export default function ProductsPage() {
       }
 
       items = Array.isArray(items) ? items : [];
-
       setProducts(items);
       setPages(Number(pagesCount || 1));
       setTotalItems(Number(total || 0));
@@ -275,7 +352,7 @@ export default function ProductsPage() {
       setErr("");
     } catch (e) {
       if (e.name === "CanceledError" || e.name === "AbortError") {
-        // aborted: ignore
+        // ignore
       } else {
         console.error(e);
         setErr(e?.response?.data?.message || e?.message || "Failed to load products");
@@ -286,7 +363,7 @@ export default function ProductsPage() {
     }
   }
 
-  /* ---------- debounced search effect ---------- */
+  /* debounced search */
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setSearching(true);
@@ -298,51 +375,68 @@ export default function ProductsPage() {
     return () => clearTimeout(debounceRef.current);
   }, [q]);
 
-  /* ---------- fetch when page or debouncedQ change ---------- */
   useEffect(() => {
     fetchProducts(page, debouncedQ);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, debouncedQ]);
 
-  /* ---------- initial load ---------- */
-  useEffect(() => { fetchProducts(1, debouncedQ); }, []); // run once on mount
+  useEffect(() => {
+    fetchProducts(1, debouncedQ);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /* ---------- actions: create/edit/delete & units ---------- */
+  /* actions */
   const openCreate = () => {
-    if (!isSuper) { setErr("Only Super Admin can create products"); return; }
+    if (!isSuper) {
+      setErr("Only Super Admin can create products");
+      return;
+    }
     setEditing(null);
     setForm({ productName: "", description: "", category_id: "" });
     setInitUnits([]);
     setOpenEdit(true);
+    setOk("");
+    setErr("");
   };
 
   const openEditProduct = (p) => {
-    if (!isSuper) { setErr("Only Super Admin can edit products"); return; }
+    if (!isSuper) {
+      setErr("Only Super Admin can edit products");
+      return;
+    }
     setEditing(p);
     setForm({
       productName: p.productName || "",
       description: p.description || "",
-      category_id: p.category_id ?? p.categoryId ?? p?.category?.id ?? ""
+      category_id: p.category_id ?? p.categoryId ?? p?.category?.id ?? "",
     });
     setInitUnits([]);
     setOpenEdit(true);
+    setOk("");
+    setErr("");
   };
 
   async function submitProduct(e) {
     e.preventDefault();
-    if (!isSuper) { setErr("Only Super Admin can perform this action"); return; }
-    setErr(""); setOk("");
+    if (!isSuper) {
+      setErr("Only Super Admin can perform this action");
+      return;
+    }
+    setErr("");
+    setOk("");
     try {
       const body = {
         productName: form.productName?.trim(),
         description: form.description?.trim(),
-        category_id: form.category_id || null
+        category_id: form.category_id || null,
       };
+
       if (!editing && initUnits.length > 0) {
         body.units = initUnits
-          .filter(u => u.unit_id && u.rate !== "" && !Number.isNaN(Number(u.rate)))
-          .map(u => ({ unit_id: Number(u.unit_id), rate: Number(u.rate) }));
+          .filter((u) => u.unit_id && u.rate !== "" && !Number.isNaN(Number(u.rate)))
+          .map((u) => ({ unit_id: Number(u.unit_id), rate: Number(u.rate) }));
       }
+
       if (editing?.id) {
         await api.put(`/products/${editing.id}`, body);
         setOk("Product updated");
@@ -350,8 +444,8 @@ export default function ProductsPage() {
         await api.post("/products", body);
         setOk("Product created");
       }
+
       setOpenEdit(false);
-      // if new product, fetch page 1 (backend likely orders newest first)
       await fetchProducts(editing ? page : 1, debouncedQ);
       if (!editing) setPage(1);
     } catch (e) {
@@ -374,7 +468,10 @@ export default function ProductsPage() {
   }
 
   function requestDeleteProduct(p) {
-    if (!isSuper) { setErr("Only Super Admin can delete products"); return; }
+    if (!isSuper) {
+      setErr("Only Super Admin can delete products");
+      return;
+    }
     openConfirm({
       message: `Delete product “${p.productName}”? This cannot be undone.`,
       onConfirm: async () => {
@@ -387,36 +484,48 @@ export default function ProductsPage() {
           setConfirmMode("error");
           setConfirmMsg(e?.response?.data?.message || e?.message || "Delete failed");
         }
-      }
+      },
     });
   }
 
   async function openUnitsManager(p) {
-    if (!isSuper) { setErr("Only Super Admin can manage unit rates"); return; }
+    if (!isSuper) {
+      setErr("Only Super Admin can manage unit rates");
+      return;
+    }
     setUnitsProduct(p);
     setUnitsForProduct([]);
     setAddUnitRow({ unit_id: "", rate: "" });
     setOpenUnits(true);
+    setErr("");
+    setOk("");
     try {
       const r = await api.get(`/product-units/product/${p.id}`);
       const list = r?.data?.data ?? r?.data ?? [];
-      setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha(x => x?.unit?.name)));
+      setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha((x) => x?.unit?.name)));
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Failed to load product units");
     }
   }
 
   async function addUnitToProduct() {
-    if (!isSuper) { setErr("Only Super Admin can add unit rates"); return; }
-    setErr(""); setOk("");
+    if (!isSuper) {
+      setErr("Only Super Admin can add unit rates");
+      return;
+    }
+    setErr("");
+    setOk("");
     try {
       const unit_id = Number(addUnitRow.unit_id);
       const rate = Number(addUnitRow.rate);
-      if (!unitsProduct?.id || !unit_id || Number.isNaN(rate)) return;
+      if (!unitsProduct?.id || !unit_id || Number.isNaN(rate)) {
+        setErr("Select unit and valid rate");
+        return;
+      }
       await api.post("/product-units", { product_id: unitsProduct.id, unit_id, rate });
       const r = await api.get(`/product-units/product/${unitsProduct.id}`);
       const list = r?.data?.data ?? r?.data ?? [];
-      setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha(x => x?.unit?.name)));
+      setUnitsForProduct((Array.isArray(list) ? list : []).slice().sort(byAlpha((x) => x?.unit?.name)));
       setAddUnitRow({ unit_id: "", rate: "" });
       setOk("Unit added");
     } catch (e) {
@@ -425,26 +534,33 @@ export default function ProductsPage() {
   }
 
   function requestRemoveUnit(puId) {
-    if (!isSuper) { setErr("Only Super Admin can remove unit rates"); return; }
+    if (!isSuper) {
+      setErr("Only Super Admin can remove unit rates");
+      return;
+    }
     openConfirm({
       message: "Remove this unit from the product?",
       onConfirm: async () => {
         try {
           await api.delete(`/product-units/${puId}`);
-          setUnitsForProduct(prev => prev.filter(x => x.id !== puId));
+          setUnitsForProduct((prev) => prev.filter((x) => x.id !== puId));
           setConfirmMode("success");
           setConfirmMsg("Unit removed.");
         } catch (e) {
           setConfirmMode("error");
           setConfirmMsg(e?.response?.data?.message || e?.message || "Delete failed");
         }
-      }
+      },
     });
   }
 
   async function updateUnitRate(puId, newRate) {
-    if (!isSuper) { setErr("Only Super Admin can update unit rates"); return; }
-    setErr(""); setOk("");
+    if (!isSuper) {
+      setErr("Only Super Admin can update unit rates");
+      return;
+    }
+    setErr("");
+    setOk("");
     try {
       await api.put(`/product-units/${puId}`, { rate: Number(newRate) });
       setOk("Rate updated");
@@ -453,49 +569,31 @@ export default function ProductsPage() {
     }
   }
 
-  /* ---------- render ---------- */
+  /* render */
   return (
     <div className="space-y-5">
-      {/* header */}
       <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 backdrop-blur">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900 flex items-center gap-2">
               <Package2 className="text-indigo-600" /> Products
             </h1>
-            <p className="text-sm text-slate-500">
-              {isSuper ? "Browse, create, edit and manage unit rates." : "Browse products and unit rates (read-only)."}
-            </p>
+            <p className="text-sm text-slate-500">{isSuper ? "Browse, create, edit and manage unit rates." : "Browse products and unit rates (read-only)."}</p>
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <div className="flex w-full items-center gap-2 rounded-xl border bg-white px-3 py-2.5 shadow-sm sm:w-auto">
               <Search size={16} className="text-slate-400" />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search product, category…"
-                className="w-full sm:w-64 bg-transparent outline-none text-sm"
-              />
-              {/* small inline spinner when searching or loading */}
-              <div className="ml-2">
-                {(searching || loading) && (
-                  <svg className="animate-spin h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.15" />
-                    <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                )}
-              </div>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search product, category…" className="w-full sm:w-64 bg-transparent outline-none text-sm" />
+              <div className="ml-2">{(searching || loading) && <svg className="animate-spin h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.15" /><path d="M22 12a10 10 0 00-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>}</div>
             </div>
 
-            <button onClick={() => fetchProducts(1, debouncedQ)}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100">
+            <button onClick={() => fetchProducts(1, debouncedQ)} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100">
               <RefreshCw size={16} /> Refresh
             </button>
 
             {isSuper && (
-              <button onClick={openCreate}
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md">
+              <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow hover:shadow-md">
                 <Plus size={16} /> New Product
               </button>
             )}
@@ -506,7 +604,6 @@ export default function ProductsPage() {
         {ok && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
       </div>
 
-      {/* grid */}
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[...Array(PAGE_SIZE)].map((_, i) => (
@@ -537,7 +634,7 @@ export default function ProductsPage() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {(p.productUnits || []).slice().sort(byAlpha(x => x?.unit?.name)).map(u => (
+                  {(p.productUnits || []).slice().sort(byAlpha((x) => x?.unit?.name)).map((u) => (
                     <RateChip key={u.id} name={u?.unit?.name ?? "—"} rate={u?.rate ?? "—"} />
                   ))}
                   {(!p.productUnits || p.productUnits.length === 0) && <span className="text-xs text-slate-400">No rates yet</span>}
@@ -565,28 +662,37 @@ export default function ProductsPage() {
       )}
 
       {/* Create/Edit Product Modal */}
-      <Modal open={openEdit} onClose={() => setOpenEdit(false)} title={editing ? "Edit Product" : "New Product"} footer={
-        <div className="flex justify-end gap-2">
-          <button className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm" onClick={() => setOpenEdit(false)}>Cancel</button>
-          <button className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" onClick={submitProduct}>
-            <Save size={16} /> {editing ? "Save changes" : "Create"}
-          </button>
-        </div>
-      }>
+      <Modal
+        open={openEdit}
+        onClose={() => setOpenEdit(false)}
+        title={editing ? "Edit Product" : "New Product"}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm" onClick={() => setOpenEdit(false)}>
+              Cancel
+            </button>
+            <button className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" onClick={submitProduct}>
+              <Save size={16} /> {editing ? "Save changes" : "Create"}
+            </button>
+          </div>
+        }
+      >
         <form onSubmit={submitProduct} className="grid gap-4">
           <Field label="Product Name">
-            <input className="rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200" value={form.productName} onChange={(e) => setForm(f => ({ ...f, productName: e.target.value }))} required />
+            <input className="rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200" value={form.productName} onChange={(e) => setForm((f) => ({ ...f, productName: e.target.value }))} required />
           </Field>
 
           <Field label="Description">
-            <textarea className="min-h-[80px] rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200" value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} />
+            <textarea className="min-h-[80px] rounded-xl border px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
           </Field>
 
           <Field label="Category">
-            <select className="rounded-xl border bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-200" value={form.category_id} onChange={(e) => setForm(f => ({ ...f, category_id: e.target.value }))}>
-              <option value="">— Select —</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name || c.categoryName}</option>)}
-            </select>
+            <SearchableSelect
+              value={form.category_id}
+              onChange={(val) => setForm((f) => ({ ...f, category_id: val }))}
+              options={[{ value: "", label: "— Select —" }, ...categories.map((c) => ({ value: c.id, label: c.name || c.categoryName }))]}
+              placeholder="Select category"
+            />
           </Field>
 
           {!editing && (
@@ -595,26 +701,24 @@ export default function ProductsPage() {
               <div className="grid gap-2">
                 {initUnits.map((row, idx) => (
                   <div key={idx} className="flex flex-wrap items-center gap-2">
-                    <select className="w-48 rounded-xl border bg-white px-3 py-2" value={row.unit_id} onChange={(e) => {
-                      const v = e.target.value;
-                      setInitUnits(list => list.map((r, i) => i === idx ? { ...r, unit_id: v } : r));
-                    }}>
-                      <option value="">Unit…</option>
-                      {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
+                    <div className="w-48">
+                      <SearchableSelect
+                        value={row.unit_id}
+                        onChange={(val) => setInitUnits((list) => list.map((r, i) => (i === idx ? { ...r, unit_id: val } : r)))}
+                        options={[{ value: "", label: "Unit…" }, ...units.map((u) => ({ value: u.id, label: u.name }))]}
+                        placeholder="Unit…"
+                      />
+                    </div>
 
-                    <input type="number" step="0.01" placeholder="Rate" className="w-36 rounded-xl border px-3 py-2" value={row.rate} onChange={(e) => {
-                      const v = e.target.value;
-                      setInitUnits(list => list.map((r, i) => i === idx ? { ...r, rate: v } : r));
-                    }} />
+                    <input type="number" step="0.01" placeholder="Rate" className="w-36 rounded-xl border px-3 py-2" value={row.rate} onChange={(e) => setInitUnits((list) => list.map((r, i) => (i === idx ? { ...r, rate: e.target.value } : r)))} />
 
-                    <button type="button" onClick={() => setInitUnits(list => list.filter((_, i) => i !== idx))} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+                    <button type="button" onClick={() => setInitUnits((list) => list.filter((_, i) => i !== idx))} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
                       <Trash2 size={16} />
                     </button>
                   </div>
                 ))}
 
-                <button type="button" onClick={() => setInitUnits(list => [...list, { unit_id: "", rate: "" }])} className="inline-flex w-fit items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                <button type="button" onClick={() => setInitUnits((list) => [...list, { unit_id: "", rate: "" }])} className="inline-flex w-fit items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
                   <Plus size={16} /> Add unit &amp; rate
                 </button>
               </div>
@@ -630,11 +734,13 @@ export default function ProductsPage() {
           {unitsForProduct.length === 0 ? (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">No units yet.</div>
           ) : (
-            unitsForProduct.map(row => (
+            unitsForProduct.map((row) => (
               <div key={row.id} className="flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2">
                 <span className="min-w-28 rounded-lg bg-slate-100 px-2 py-1 text-sm">{row?.unit?.name ?? "—"}</span>
                 <input type="number" step="0.01" defaultValue={row.rate} onBlur={(e) => updateUnitRate(row.id, e.target.value)} className="w-36 rounded-xl border px-3 py-2" />
-                <button onClick={() => requestRemoveUnit(row.id)} className="ml-auto rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700">Remove</button>
+                <button onClick={() => requestRemoveUnit(row.id)} className="ml-auto rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700">
+                  Remove
+                </button>
               </div>
             ))
           )}
@@ -643,12 +749,16 @@ export default function ProductsPage() {
         <div className="mt-4 rounded-xl border p-3">
           <div className="mb-2 text-sm font-medium text-slate-700">Add unit</div>
           <div className="flex flex-wrap items-center gap-2">
-            <select className="w-48 rounded-xl border bg-white px-3 py-2" value={addUnitRow.unit_id} onChange={(e) => setAddUnitRow(r => ({ ...r, unit_id: e.target.value }))}>
-              <option value="">Unit…</option>
-              {units.filter(u => !unitsForProduct.some(r => r?.unit?.id === u.id)).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
+            <div className="w-48">
+              <SearchableSelect
+                value={addUnitRow.unit_id}
+                onChange={(val) => setAddUnitRow((r) => ({ ...r, unit_id: val }))}
+                options={[{ value: "", label: "Unit…" }, ...units.filter((u) => !unitsForProduct.some((r) => r?.unit?.id === u.id)).map((u) => ({ value: u.id, label: u.name }))]}
+                placeholder="Unit…"
+              />
+            </div>
 
-            <input type="number" step="0.01" placeholder="Rate" className="w-36 rounded-xl border px-3 py-2" value={addUnitRow.rate} onChange={(e) => setAddUnitRow(r => ({ ...r, rate: e.target.value }))} />
+            <input type="number" step="0.01" placeholder="Rate" className="w-36 rounded-xl border px-3 py-2" value={addUnitRow.rate} onChange={(e) => setAddUnitRow((r) => ({ ...r, rate: e.target.value }))} />
 
             <button onClick={addUnitToProduct} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">
               <Plus size={16} /> Add
@@ -657,7 +767,6 @@ export default function ProductsPage() {
         </div>
       </Modal>
 
-      {/* confirm */}
       <ConfirmModal open={confirmOpen} mode={confirmMode} message={confirmMsg} onCancel={() => closeConfirm()} onConfirm={async () => { await confirmActionRef.current(); }} confirmLabel="Delete" />
     </div>
   );

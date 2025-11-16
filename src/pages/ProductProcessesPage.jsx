@@ -1,58 +1,116 @@
 // src/pages/ProductProcessesPage.jsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Plus, RefreshCw, Search, Trash2, Pencil, X, Package, Warehouse,
-  Layers, FileText, ChevronLeft, ChevronRight
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Pencil,
+  X,
+  Warehouse,
+  Layers,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { api } from "../utils/api";
 
-/**
- * ProductProcessesPage
- * - List / pagination (server)
- * - Create process (admin+)
- * - View process
- * - Update start_qty (admin+)
- * - Delete process (admin+)
- *
- * Assumes backend endpoints:
- * GET  /product-processes            -> returns { data: [...], pagination: { total, page, limit, pages } }
- * GET  /product-processes/:id
- * POST /product-processes
- * PUT  /product-processes/:id
- * DELETE /product-processes/:id
- * GET  /product-processes/conversions/by-product-inventory/:product_id/:inventory_id
- * GET  /product-processes/conversions/all
- *
- * If your backend returns slightly different shapes, adjust `normalizeResponse` below.
- */
+const formatDate = (v) => {
+  if (!v) return "—";
+  const d = new Date(v);
+  return Number.isNaN(+d) ? "—" : d.toLocaleString();
+};
+const cls = (...parts) => parts.filter(Boolean).join(" ");
 
-/* ---------------- small helpers ---------------- */
-function formatDate(value) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(+d)) return "—";
-  return d.toLocaleString();
-}
 function Badge({ children, tone = "bg-slate-100 text-slate-700 border-slate-200" }) {
   return <span className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-xs font-medium ${tone}`}>{children}</span>;
 }
 
-/* ---------------- Confirm dialog ---------------- */
-function ConfirmDialog({ open, title = "Are you sure?", message, confirmLabel = "Confirm", tone = "rose", onConfirm, onClose }) {
+/* SearchableSelect (strings or {value,label}) */
+function SearchableSelect({ value, onChange, options = [], placeholder = "Select…", className = "" }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const normalized = useMemo(() => options.map(o => (typeof o === "string" ? { value: o, label: o } : o)), [options]);
+  const filtered = useMemo(() => {
+    const s = (q || "").toLowerCase().trim();
+    if (!s) return normalized;
+    return normalized.filter(o => (o.label || "").toLowerCase().includes(s) || String(o.value).toLowerCase().includes(s));
+  }, [q, normalized]);
+
+  const selected = normalized.find(o => String(o.value) === String(value));
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen(s => !s)}
+        className="w-full rounded-2xl border bg-white px-3 py-2 text-left text-sm flex items-center justify-between"
+      >
+        <span className={`truncate ${selected ? "" : "text-gray-400"}`}>{selected ? selected.label : placeholder}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.25 8.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-40 mt-2 rounded-2xl border bg-white shadow">
+          <div className="p-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                autoFocus
+                className="w-full rounded-md border px-10 py-2 text-sm outline-none"
+                placeholder="Search..."
+              />
+            </div>
+          </div>
+
+          <div className="max-h-44 overflow-auto">
+            {filtered.length === 0 && <div className="p-3 text-sm text-gray-500">No options</div>}
+            {filtered.map(opt => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => { onChange(opt.value); setOpen(false); setQ(""); }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Plain confirm dialog */
+function ConfirmDialog({ open, title = "Are you sure?", message = "", confirmLabel = "Confirm", tone = "rose", onConfirm, onClose }) {
   if (!open) return null;
   const toneBtn = tone === "rose" ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-600 hover:bg-indigo-700";
   return (
     <div className="fixed inset-0 z-[95] grid place-items-center">
-      <div className="absolute inset-0 bg-slate-900/45" onClick={onClose} />
-      <div className="relative w-[min(640px,92vw)] overflow-hidden rounded-2xl border bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
-            <X size={16} />
-          </button>
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-[min(640px,92vw)] overflow-hidden rounded-2xl border bg-white shadow">
+        <div className="flex items-center justify-between border-b px-5 py-4 bg-white">
+          <h3 className="text-base font-medium text-slate-900">{title}</h3>
+          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={16} /></button>
         </div>
+
         <div className="px-5 py-4 text-sm text-slate-700">{message}</div>
-        <div className="flex justify-end gap-2 border-t px-5 py-3">
+
+        <div className="flex justify-end gap-2 border-t px-5 py-3 bg-white">
           <button onClick={onClose} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Cancel</button>
           <button onClick={() => { onConfirm?.(); onClose?.(); }} className={`rounded-xl px-4 py-2 text-sm font-semibold text-white ${toneBtn}`}>{confirmLabel}</button>
         </div>
@@ -61,17 +119,16 @@ function ConfirmDialog({ open, title = "Are you sure?", message, confirmLabel = 
   );
 }
 
-/* ---------------- Create / Edit Modal ---------------- */
+/* Plain process modal */
 function ProcessModal({ open, title = "Create Product Process", inventories = [], products = [], units = [], initial = null, onClose, onSubmit }) {
-  // initial and hooks must be unconditional
-  const emptyProcItem = { product_id: "", unit_id: "", quantity: "" };
+  const emptyItem = { product_id: "", unit_id: "", quantity: "" };
 
   const [form, setForm] = useState({
     product_id: "",
     inventory_id: "",
     start_unit_id: "",
     start_qty: "",
-    processing_items: [ { ...emptyProcItem } ],
+    processing_items: [{ ...emptyItem }],
   });
 
   useEffect(() => {
@@ -82,11 +139,12 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
         inventory_id: initial.inventory_id ?? initial.inventory?.id ?? "",
         start_unit_id: initial.start_unit_id ?? initial.startUnit?.id ?? "",
         start_qty: String(initial.start_qty ?? initial.startQty ?? ""),
-        processing_items: (initial.processings || []).map(p => ({
-          product_id: p.product_id ?? p.product?.id ?? initial.product_id,
-          unit_id: p.unit_id ?? p.unit?.id ?? "",
-          quantity: String(p.quantity ?? "")
-        })) || [ { ...emptyProcItem } ]
+        processing_items:
+          (initial.processings || []).map(p => ({
+            product_id: p.product_id ?? p.product?.id ?? initial.product_id ?? "",
+            unit_id: p.unit_id ?? p.unit?.id ?? "",
+            quantity: String(p.quantity ?? "")
+          })) || [{ ...emptyItem }],
       });
     } else {
       setForm({
@@ -94,7 +152,7 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
         inventory_id: "",
         start_unit_id: "",
         start_qty: "",
-        processing_items: [ { ...emptyProcItem } ]
+        processing_items: [{ ...emptyItem }],
       });
     }
   }, [open, initial]);
@@ -105,37 +163,33 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
     items[i] = { ...items[i], [k]: v };
     return { ...prev, processing_items: items };
   });
-  const addItem = () => setForm(prev => ({ ...prev, processing_items: [...prev.processing_items, { ...emptyProcItem }] }));
+  const addItem = () => setForm(prev => ({ ...prev, processing_items: [...prev.processing_items, { ...emptyItem }] }));
   const removeItem = (i) => setForm(prev => {
     const items = prev.processing_items.slice();
     items.splice(i, 1);
-    return { ...prev, processing_items: items.length ? items : [ { ...emptyProcItem } ] };
+    return { ...prev, processing_items: items.length ? items : [{ ...emptyItem }] };
   });
 
-  // simple client-side preview: total converted quantity (sum of processing items)
   const preview = useMemo(() => {
-    const items = (form.processing_items || []).map(it => Number(it.quantity || 0));
-    return {
-      sumConverted: items.reduce((s, n) => s + n, 0),
-      startQty: Number(form.start_qty || 0)
-    };
+    const sumConverted = (form.processing_items || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
+    const startQty = Number(form.start_qty || 0);
+    return { sumConverted, startQty };
   }, [form]);
 
   const handleSubmit = (e) => {
     e?.preventDefault?.();
-    // basic validations
+
     if (!form.product_id) return alert("Product is required");
     if (!form.inventory_id) return alert("Inventory is required");
     if (!form.start_unit_id) return alert("Start unit is required");
-    if (!form.start_qty || Number(form.start_qty) <= 0) return alert("start_qty must be positive");
+    if (!form.start_qty || Number(form.start_qty) <= 0) return alert("Start quantity must be positive");
     if (!Array.isArray(form.processing_items) || form.processing_items.length === 0) return alert("Add at least one processing item");
     for (const it of form.processing_items) {
-      if (!it.product_id) return alert("Each processing item must have product_id");
-      if (!it.unit_id) return alert("Each processing item must have unit_id");
-      if (!it.quantity || Number(it.quantity) <= 0) return alert("Each processing item must have positive quantity");
+      if (!it.product_id) return alert("Each processing item requires a product");
+      if (!it.unit_id) return alert("Each processing item requires a unit");
+      if (!it.quantity || Number(it.quantity) <= 0) return alert("Each processing item requires a positive quantity");
     }
 
-    // payload exactly as docs: do NOT include any extra fields
     const payload = {
       product_id: Number(form.product_id),
       inventory_id: Number(form.inventory_id),
@@ -144,8 +198,8 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
       processing_items: form.processing_items.map(it => ({
         product_id: Number(it.product_id),
         unit_id: Number(it.unit_id),
-        quantity: Number(it.quantity)
-      }))
+        quantity: Number(it.quantity),
+      })),
     };
 
     onSubmit(payload);
@@ -155,46 +209,49 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
 
   return (
     <div className="fixed inset-0 z-[96]">
-      <div className="absolute inset-0 bg-slate-900/45" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 w-[min(900px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-auto max-h-[92vh] rounded-2xl border bg-white shadow-2xl">
-        <div className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white rounded-t-2xl">
-          <div className="text-lg font-semibold">{title}</div>
-          <button onClick={onClose} className="rounded-lg p-2 hover:bg-white/10"><X size={18} /></button>
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute left-1/2 top-1/2 w-[min(920px,96vw)] -translate-x-1/2 -translate-y-1/2 max-h-[92vh] overflow-auto rounded-2xl border bg-white shadow">
+        <div className="flex items-center justify-between border-b px-6 py-4 bg-white">
+          <div className="text-lg font-medium text-slate-900">{title}</div>
+          <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100"><X size={18} /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium text-slate-700">Product *</label>
-              <select value={form.product_id} onChange={e => setField("product_id", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                <option value="">Select product…</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.productName || p.name}</option>)}
-              </select>
+              <label className="text-sm font-medium text-slate-700 block mb-1">Product *</label>
+              <SearchableSelect
+                value={form.product_id}
+                onChange={(v) => setField("product_id", v)}
+                options={[{ value: "", label: "Select product…" }, ...products.map(p => ({ value: p.id, label: p.productName || p.name }))]}
+              />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-slate-700">Inventory *</label>
-              <select value={form.inventory_id} onChange={e => setField("inventory_id", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                <option value="">Select inventory…</option>
-                {inventories.map(i => <option key={i.id} value={i.id}>{i.inventoryName || i.name}</option>)}
-              </select>
+              <label className="text-sm font-medium text-slate-700 block mb-1">Inventory *</label>
+              <SearchableSelect
+                value={form.inventory_id}
+                onChange={(v) => setField("inventory_id", v)}
+                options={[{ value: "", label: "Select inventory…" }, ...inventories.map(i => ({ value: i.id, label: i.inventoryName || i.name }))]}
+              />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-slate-700">Start unit *</label>
-              <select value={form.start_unit_id} onChange={e => setField("start_unit_id", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                <option value="">Select start unit…</option>
-                {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
+              <label className="text-sm font-medium text-slate-700 block mb-1">Start unit *</label>
+              <SearchableSelect
+                value={form.start_unit_id}
+                onChange={(v) => setField("start_unit_id", v)}
+                options={[{ value: "", label: "Select unit…" }, ...units.map(u => ({ value: u.id, label: u.name }))]}
+              />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-slate-700">Start quantity *</label>
+              <label className="text-sm font-medium text-slate-700 block mb-1">Start quantity *</label>
               <input type="number" min="0" step="0.01" value={form.start_qty} onChange={e => setField("start_qty", e.target.value)} className="w-full rounded-2xl border px-3 py-2" />
             </div>
           </div>
 
-          <div className="rounded-xl border p-4">
+          <div className="rounded-2xl border p-4 bg-white">
             <div className="flex items-center justify-between mb-3">
               <div className="text-slate-900 font-medium">Processing items</div>
               <button type="button" onClick={addItem} className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm hover:bg-slate-50">
@@ -204,28 +261,30 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
 
             <div className="space-y-3">
               {form.processing_items.map((it, idx) => (
-                <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_80px] gap-3 items-center">
-                  <select value={it.product_id} onChange={e => setItem(idx, "product_id", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                    <option value="">Product *</option>
-                    {products.map(p => <option key={p.id} value={p.id}>{p.productName || p.name}</option>)}
-                  </select>
+                <div key={idx} className="grid grid-cols-[2fr_1fr_1fr_72px] gap-3 items-center">
+                  <SearchableSelect
+                    value={it.product_id}
+                    onChange={(v) => setItem(idx, "product_id", v)}
+                    options={[{ value: "", label: "Product…" }, ...products.map(p => ({ value: p.id, label: p.productName || p.name }))]}
+                  />
 
-                  <select value={it.unit_id} onChange={e => setItem(idx, "unit_id", e.target.value)} className="w-full rounded-2xl border px-3 py-2">
-                    <option value="">Unit *</option>
-                    {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={it.unit_id}
+                    onChange={(v) => setItem(idx, "unit_id", v)}
+                    options={[{ value: "", label: "Unit…" }, ...units.map(u => ({ value: u.id, label: u.name }))]}
+                  />
 
-                  <input type="number" min="0" step="0.01" placeholder="Quantity *" value={it.quantity} onChange={e => setItem(idx, "quantity", e.target.value)} className="w-full rounded-2xl border px-3 py-2" />
+                  <input type="number" min="0" step="0.01" placeholder="Quantity" value={it.quantity} onChange={(e) => setItem(idx, "quantity", e.target.value)} className="w-full rounded-2xl border px-3 py-2" />
 
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => removeItem(idx)} className="rounded-full bg-rose-500 p-2 text-white"><Trash2 size={14} /></button>
+                    <button type="button" onClick={() => removeItem(idx)} className="rounded-full bg-rose-500 p-2 text-white hover:opacity-90"><Trash2 size={14} /></button>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-3 text-xs text-slate-500">
-              Preview: start qty = <strong>{preview.startQty}</strong> • converted sum = <strong>{preview.sumConverted}</strong>
+            <div className="mt-3 text-xs text-slate-600">
+              Preview — start qty: <strong>{preview.startQty}</strong> • converted sum: <strong>{preview.sumConverted}</strong>
             </div>
           </div>
 
@@ -239,20 +298,19 @@ function ProcessModal({ open, title = "Create Product Process", inventories = []
   );
 }
 
-/* ---------------- View Modal ---------------- */
+/* Plain view modal */
 function ViewModal({ open, process = null, onClose }) {
   if (!open || !process) return null;
-
   const startUnitName = process.startUnit?.name || "";
-  const productName = process.product?.productName || process.product?.name || "—";
+  const productName = process.product?.productName || process.product?.name || `#${process.product_id}`;
   const inventoryName = process.inventory?.inventoryName || process.inventory?.name || "—";
 
   return (
     <div className="fixed inset-0 z-[96] grid place-items-center">
-      <div className="absolute inset-0 bg-slate-900/45" onClick={onClose} />
-      <div className="relative w-[min(880px,94vw)] max-h-[90vh] overflow-auto rounded-2xl border bg-white">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">Product Process</h3>
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-[min(880px,94vw)] max-h-[90vh] overflow-auto rounded-2xl border bg-white shadow">
+        <div className="flex items-center justify-between border-b px-5 py-4 bg-white">
+          <h3 className="text-base font-medium text-slate-900">Product Process</h3>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={16} /></button>
         </div>
 
@@ -304,7 +362,6 @@ function ViewModal({ open, process = null, onClose }) {
   );
 }
 
-/* ---------------- Main Page ---------------- */
 export default function ProductProcessesPage() {
   const [me, setMe] = useState(null);
   const role = me?.role || "";
@@ -325,14 +382,12 @@ export default function ProductProcessesPage() {
 
   const [q, setQ] = useState("");
 
-  // UI state
   const [openModal, setOpenModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [targetRow, setTargetRow] = useState(null);
 
-  // fetch me
   useEffect(() => {
     (async () => {
       try {
@@ -345,61 +400,48 @@ export default function ProductProcessesPage() {
     })();
   }, []);
 
-  // load references once
   useEffect(() => {
     (async () => {
       try {
         const [invRes, prodRes, unitRes] = await Promise.all([
           api.get("/inventory/"),
           api.get("/products/"),
-          api.get("/units/")
+          api.get("/units/"),
         ]);
         setInventories((invRes?.data?.data ?? invRes?.data ?? []).slice());
         setProducts((prodRes?.data?.data ?? prodRes?.data ?? []).slice());
         setUnits((unitRes?.data?.data ?? unitRes?.data ?? []).slice());
-      } catch (e) {
+      } catch {
         // non-fatal
       }
     })();
   }, []);
 
-  // normalize response helper (supports multiple shapes)
   const normalizeListResponse = (res, defaultPage = 1) => {
-  const root = res?.data ?? {};
-  const items = Array.isArray(root.data)
-    ? root.data
-    : Array.isArray(root.rows)
-    ? root.rows
-    : Array.isArray(res?.data)
-    ? res.data
-    : [];
+    const root = res?.data ?? {};
+    const items = Array.isArray(root.data)
+      ? root.data
+      : Array.isArray(root.rows)
+      ? root.rows
+      : Array.isArray(res?.data)
+      ? res.data
+      : [];
 
-  const pagination = root.pagination || {
-    total: Number(root.total ?? root.count ?? (Array.isArray(items) ? items.length : 0)),
-    page: Number(root.page ?? defaultPage),
-    limit: Number(root.limit ?? perPage),
-    // NOTE: parentheses added around (root.limit ?? perPage) so `|| 10` does not mix with `??`
-    pages: Number(
-      root.pages ??
-        Math.ceil(
-          (root.total ?? root.count ?? (Array.isArray(items) ? items.length : 0)) /
-            ((root.limit ?? perPage) || 10)
-        )
-    ),
+    const totalCount = Number(root.total ?? root.count ?? (Array.isArray(items) ? items.length : 0));
+    const limit = Number(root.limit ?? perPage);
+    const pages = Number(root.pages ?? Math.max(1, Math.ceil(totalCount / (limit || perPage))));
+    const pageNum = Number(root.page ?? defaultPage);
+
+    return { items, pagination: { total: totalCount, page: pageNum, limit: limit || perPage, pages } };
   };
-
-  return { items, pagination };
-};
 
   const fetchProcesses = useCallback(async (p = 1) => {
     setLoading(true); setErr(""); setOk("");
     try {
       const params = { page: p, limit: perPage };
       if (q) params.q = q;
-
       const res = await api.get("/product-processes", { params });
       const { items, pagination } = normalizeListResponse(res, p);
-
       setProcesses(items);
       setTotal(Number(pagination.total || 0));
       setPage(Number(pagination.page || p));
@@ -414,7 +456,6 @@ export default function ProductProcessesPage() {
   useEffect(() => { setPage(1); fetchProcesses(1); }, [q, fetchProcesses]);
   useEffect(() => { fetchProcesses(page); }, [page, fetchProcesses]);
 
-  // create
   const handleCreate = async (payload) => {
     if (!isAdminOrAbove) { setErr("Only Admin or Superadmin can create processes"); return; }
     try {
@@ -422,13 +463,12 @@ export default function ProductProcessesPage() {
       await api.post("/product-processes", payload);
       setOk("Product process created");
       setOpenModal(false);
-      fetchProcesses(page);
+      fetchProcesses(1);
     } catch (e) {
       setErr(e?.response?.data?.message || e?.message || "Create failed");
     }
   };
 
-  // update (only supports start_qty per docs)
   const handleUpdate = async (id, partial) => {
     if (!isAdminOrAbove) { setErr("Only Admin or Superadmin can update processes"); return; }
     try {
@@ -443,14 +483,12 @@ export default function ProductProcessesPage() {
     }
   };
 
-  // delete
   const handleDelete = async (row) => {
     if (!isAdminOrAbove) { setErr("Only Admin or Superadmin can delete processes"); return; }
     try {
       setErr(""); setOk("");
       await api.delete(`/product-processes/${row.id}`);
       setOk("Product process deleted");
-      // if last item on page removed, go back
       const goBack = processes.length === 1 && page > 1;
       fetchProcesses(goBack ? page - 1 : page);
     } catch (e) {
@@ -458,27 +496,23 @@ export default function ProductProcessesPage() {
     }
   };
 
-  // fetch conversions by product+inventory (utility)
   const fetchConversionsByProductInventory = async (productId, inventoryId) => {
     try {
       const res = await api.get(`/product-processes/conversions/by-product-inventory/${productId}/${inventoryId}`);
       return res?.data ?? [];
-    } catch (e) {
+    } catch {
       return [];
     }
   };
-
-  // fetch all process-derived stock entries
   const fetchAllProcessingStocks = async () => {
     try {
       const res = await api.get("/product-processes/conversions/all");
       return res?.data ?? [];
-    } catch (e) {
+    } catch {
       return [];
     }
   };
 
-  // pagination helpers
   const pages = Math.max(1, Math.ceil(total / perPage));
   const windowSize = 5;
   let lo = Math.max(1, page - Math.floor(windowSize / 2));
@@ -492,7 +526,7 @@ export default function ProductProcessesPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Product Processes</h1>
-          <p className="text-sm text-slate-500">Convert product units (processing). Creation and modifications are recorded in stock (method='processing').</p>
+          <p className="text-sm text-slate-500">Convert product units. Creation and modifications create processing stock entries.</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -568,10 +602,9 @@ export default function ProductProcessesPage() {
             })}
           </div>
 
-          {/* pagination */}
           <div className="mt-6 flex justify-center">
             <div className="flex items-center gap-2">
-              <button onClick={() => setPage(s => Math.max(1, s-1))} disabled={page <= 1} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm disabled:opacity-40"><ChevronLeft size={16} /> Prev</button>
+              <button onClick={() => setPage(s => Math.max(1, s - 1))} disabled={page <= 1} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm disabled:opacity-40"><ChevronLeft size={16} /> Prev</button>
 
               {lo > 1 && <>
                 <button onClick={() => setPage(1)} className="rounded-2xl border px-4 py-2 text-sm">1</button>
@@ -605,8 +638,7 @@ export default function ProductProcessesPage() {
         onClose={() => { setOpenModal(false); setEditing(null); }}
         onSubmit={(payload) => {
           if (editing && editing.id) {
-            // per docs only start_qty can be updated: send partial
-            return handleUpdate(editing.id, { start_qty: payload.start_qty ?? payload.startQty ?? payload.startQty });
+            return handleUpdate(editing.id, { start_qty: payload.start_qty ?? payload.startQty ?? payload.start_qty });
           }
           return handleCreate(payload);
         }}

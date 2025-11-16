@@ -1,34 +1,126 @@
 // src/pages/MixturePage.jsx
-import React, { useEffect, useMemo, useState } from "react";
-import { Beaker, Plus, Trash2, RefreshCw } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Beaker,
+  Plus,
+  Trash2,
+  RefreshCw,
+  X,
+  Search as SearchIcon,
+} from "lucide-react";
 import { api } from "../utils/api";
 
-/**
- * MixturePage
- * - dropdowns for inventory / product / unit
- * - separate mixIn (inputs) and mixOut (outputs) sections
- * - preview/outcome shown for both sections
- * - create, list, delete
- * - uses /mixtures endpoint
- * - shows inline errors under dropdowns/inputs
- */
+/* --------------------------- date formatting --------------------------- */
+function ordinal(n) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+function fmtPrettyDate(input) {
+  if (!input) return "—";
+  const d = new Date(input);
+  if (Number.isNaN(+d)) return "—";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${ordinal(d.getDate())} ${months[d.getMonth()]}, ${d.getFullYear()}`;
+}
+
+/* ---------- small reusable searchable select (compact + accessible) ---------- */
+function SearchableSelect({ value, onChange, options = [], placeholder = "Select…", className = "" }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const items = useMemo(
+    () =>
+      options.map((o) =>
+        typeof o === "string"
+          ? { value: o, label: o }
+          : { value: o.value ?? o.id ?? o, label: o.label ?? o.name ?? o.unitName ?? String(o.value ?? o.id ?? o) }
+      ),
+    [options]
+  );
+
+  const filtered = useMemo(() => {
+    const s = (q || "").toLowerCase().trim();
+    if (!s) return items;
+    return items.filter((it) => (it.label || "").toLowerCase().includes(s) || String(it.value).toLowerCase().includes(s));
+  }, [q, items]);
+
+  const selected = items.find((i) => String(i.value) === String(value));
+
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full rounded-xl border bg-white px-3 py-2 text-left text-sm flex items-center justify-between shadow-sm"
+      >
+        <span className={`truncate ${selected ? "text-slate-900" : "text-slate-400"}`}>{selected ? selected.label : placeholder}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.25 8.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-40 mt-2 rounded-xl border bg-white shadow-lg">
+          <div className="p-2">
+            <div className="relative">
+              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                autoFocus
+                className="w-full rounded-md border px-10 py-2 text-sm outline-none"
+                placeholder="Search..."
+              />
+            </div>
+          </div>
+
+          <div className="max-h-44 overflow-auto">
+            {filtered.length === 0 && <div className="p-3 text-sm text-gray-500">No options</div>}
+            {filtered.map((opt) => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                  setQ("");
+                }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- core page --------------------------- */
 export default function MixturePage() {
-  // data lists
   const [inventories, setInventories] = useState([]);
   const [products, setProducts] = useState([]);
   const [units, setUnits] = useState([]);
 
-  // mixtures list
   const [mixtures, setMixtures] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
-  // modal / create form
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  // form state: inventory chosen + notes + arrays for inputs/outputs
   const defaultInput = { productId: "", unitId: "", qty: "" };
   const defaultOutput = { productId: "", unitId: "", qty: "" };
 
@@ -39,7 +131,6 @@ export default function MixturePage() {
     outputs: [{ ...defaultOutput }],
   });
 
-  // inline errors state
   const [formErrors, setFormErrors] = useState({
     inventory: "",
     inputs: [],
@@ -47,32 +138,15 @@ export default function MixturePage() {
     general: "",
   });
 
-  /* ---------- fetch reference lists & mixtures ---------- */
+  /* fetch references & mixtures */
   async function fetchReferences() {
     try {
-      const [invRes, prodRes, unitRes] = await Promise.allSettled([
-        api.get("/inventory"),
-        api.get("/products"),
-        api.get("/units"),
-      ]);
-
-      const inv =
-        invRes.status === "fulfilled"
-          ? (invRes.value?.data?.data ?? invRes.value?.data ?? [])
-          : [];
-      const prod =
-        prodRes.status === "fulfilled"
-          ? (prodRes.value?.data?.data ?? prodRes.value?.data ?? [])
-          : [];
-      const unit =
-        unitRes.status === "fulfilled"
-          ? (unitRes.value?.data?.data ?? unitRes.value?.data ?? [])
-          : [];
-
-      setInventories(Array.isArray(inv) ? inv : []);
-      setProducts(Array.isArray(prod) ? prod : []);
-      setUnits(Array.isArray(unit) ? unit : []);
-    } catch (e) {
+      const [invRes, prodRes, unitRes] = await Promise.allSettled([api.get("/inventory"), api.get("/products"), api.get("/units")]);
+      const pick = (r) => (r?.status === "fulfilled" ? (r.value?.data?.data ?? r.value?.data ?? []) : []);
+      setInventories(Array.isArray(pick(invRes)) ? pick(invRes) : []);
+      setProducts(Array.isArray(pick(prodRes)) ? pick(prodRes) : []);
+      setUnits(Array.isArray(pick(unitRes)) ? pick(unitRes) : []);
+    } catch {
       // non-fatal
     }
   }
@@ -96,61 +170,42 @@ export default function MixturePage() {
     fetchMixtures();
   }, []);
 
-  /* ---------- helper to update form arrays ---------- */
-  function updateInput(idx, key, value) {
+  /* helpers to update form arrays */
+  const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const updateInput = (i, k, v) => {
     setForm((f) => {
       const inputs = f.inputs.slice();
-      inputs[idx] = { ...inputs[idx], [key]: value };
+      inputs[i] = { ...inputs[i], [k]: v };
       return { ...f, inputs };
     });
-    // clear specific error for this field
-    setFormErrors(prev => {
-      const next = { ...prev, inputs: prev.inputs.slice() };
-      next.inputs[idx] = ""; // clear error message for this input row
-      next.general = "";
-      return next;
-    });
-  }
-  function updateOutput(idx, key, value) {
+    setFormErrors((p) => ({ ...p, inputs: p.inputs.slice().map((x, idx) => (idx === i ? "" : x)), general: "" }));
+  };
+  const updateOutput = (i, k, v) => {
     setForm((f) => {
       const outputs = f.outputs.slice();
-      outputs[idx] = { ...outputs[idx], [key]: value };
+      outputs[i] = { ...outputs[i], [k]: v };
       return { ...f, outputs };
     });
-    // clear specific error for this field
-    setFormErrors(prev => {
-      const next = { ...prev, outputs: prev.outputs.slice() };
-      next.outputs[idx] = "";
-      next.general = "";
-      return next;
-    });
-  }
-  function addInput() {
+    setFormErrors((p) => ({ ...p, outputs: p.outputs.slice().map((x, idx) => (idx === i ? "" : x)), general: "" }));
+  };
+  const addInput = () => {
     setForm((f) => ({ ...f, inputs: [...f.inputs, { ...defaultInput }] }));
-    setFormErrors(prev => ({ ...prev, inputs: [...(prev.inputs || []), ""] }));
-  }
-  function addOutput() {
+    setFormErrors((p) => ({ ...p, inputs: [...(p.inputs || []), ""] }));
+  };
+  const addOutput = () => {
     setForm((f) => ({ ...f, outputs: [...f.outputs, { ...defaultOutput }] }));
-    setFormErrors(prev => ({ ...prev, outputs: [...(prev.outputs || []), ""] }));
-  }
-  function removeInput(idx) {
-    setForm((f) => ({ ...f, inputs: f.inputs.filter((_, i) => i !== idx) }));
-    setFormErrors(prev => {
-      const inputs = (prev.inputs || []).slice();
-      inputs.splice(idx, 1);
-      return { ...prev, inputs };
-    });
-  }
-  function removeOutput(idx) {
-    setForm((f) => ({ ...f, outputs: f.outputs.filter((_, i) => i !== idx) }));
-    setFormErrors(prev => {
-      const outputs = (prev.outputs || []).slice();
-      outputs.splice(idx, 1);
-      return { ...prev, outputs };
-    });
-  }
+    setFormErrors((p) => ({ ...p, outputs: [...(p.outputs || []), ""] }));
+  };
+  const removeInput = (i) => {
+    setForm((f) => ({ ...f, inputs: f.inputs.filter((_, idx) => idx !== i) }));
+    setFormErrors((p) => ({ ...p, inputs: (p.inputs || []).filter((_, idx) => idx !== i) }));
+  };
+  const removeOutput = (i) => {
+    setForm((f) => ({ ...f, outputs: f.outputs.filter((_, idx) => idx !== i) }));
+    setFormErrors((p) => ({ ...p, outputs: (p.outputs || []).filter((_, idx) => idx !== i) }));
+  };
 
-  /* ---------- create ---------- */
+  /* create mixture */
   async function handleCreate(e) {
     e.preventDefault();
     setErr("");
@@ -159,7 +214,6 @@ export default function MixturePage() {
     setCreating(true);
 
     try {
-      // basic validation with inline errors
       const errors = { inventory: "", inputs: [], outputs: [], general: "" };
       let hasError = false;
 
@@ -170,41 +224,31 @@ export default function MixturePage() {
 
       const inputsClean = [];
       for (let i = 0; i < form.inputs.length; i++) {
-        const row = form.inputs[i] || {};
-        if (!row.productId || !row.unitId || !row.qty) {
+        const r = form.inputs[i] || {};
+        if (!r.productId || !r.unitId || r.qty === "" || r.qty == null) {
           errors.inputs[i] = "Select product, unit and qty.";
           hasError = true;
-        } else if (Number(row.qty) <= 0) {
+        } else if (Number(r.qty) <= 0 || Number.isNaN(Number(r.qty))) {
           errors.inputs[i] = "Qty must be > 0.";
           hasError = true;
         } else {
           errors.inputs[i] = "";
-          inputsClean.push({
-            productId: Number(row.productId),
-            unitId: Number(row.unitId),
-            qty: Number(row.qty),
-            status: "mixIn",
-          });
+          inputsClean.push({ productId: Number(r.productId), unitId: Number(r.unitId), qty: Number(r.qty), status: "mixIn" });
         }
       }
 
       const outputsClean = [];
       for (let i = 0; i < form.outputs.length; i++) {
-        const row = form.outputs[i] || {};
-        if (!row.productId || !row.unitId || !row.qty) {
+        const r = form.outputs[i] || {};
+        if (!r.productId || !r.unitId || r.qty === "" || r.qty == null) {
           errors.outputs[i] = "Select product, unit and qty.";
           hasError = true;
-        } else if (Number(row.qty) <= 0) {
+        } else if (Number(r.qty) <= 0 || Number.isNaN(Number(r.qty))) {
           errors.outputs[i] = "Qty must be > 0.";
           hasError = true;
         } else {
           errors.outputs[i] = "";
-          outputsClean.push({
-            productId: Number(row.productId),
-            unitId: Number(row.unitId),
-            qty: Number(row.qty),
-            status: "mixOut",
-          });
+          outputsClean.push({ productId: Number(r.productId), unitId: Number(r.unitId), qty: Number(r.qty), status: "mixOut" });
         }
       }
 
@@ -232,7 +276,6 @@ export default function MixturePage() {
       await api.post("/mixtures", payload);
       setOk("Mixture created.");
       setOpen(false);
-      // reset
       setForm({
         inventoryId: "",
         notes: "",
@@ -242,16 +285,15 @@ export default function MixturePage() {
       setFormErrors({ inventory: "", inputs: [], outputs: [], general: "" });
       await fetchMixtures();
     } catch (e) {
-      // if backend validation returns field-level messages, try to reflect that
       const msg = e?.response?.data?.message || e?.message || "Create failed";
-      setFormErrors(prev => ({ ...prev, general: msg }));
+      setFormErrors((p) => ({ ...p, general: msg }));
       setErr(msg);
     } finally {
       setCreating(false);
     }
   }
 
-  /* ---------- delete ---------- */
+  /* delete mixture */
   async function handleDelete(id) {
     if (!window.confirm("Delete this mixture? This will reverse associated stock entries.")) return;
     try {
@@ -263,7 +305,7 @@ export default function MixturePage() {
     }
   }
 
-  /* ---------- helpers to resolve names for preview ---------- */
+  /* maps and previews */
   const productMap = useMemo(() => {
     const m = {};
     for (const p of products) m[p.id] = p;
@@ -282,84 +324,89 @@ export default function MixturePage() {
     return m;
   }, [inventories]);
 
-  // live preview arrays for the create form
   const previewInputs = (form.inputs || []).filter((i) => i.productId && i.unitId && i.qty);
   const previewOutputs = (form.outputs || []).filter((o) => o.productId && o.unitId && o.qty);
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="rounded-3xl border border-white/60 bg-white/70 p-5 shadow-[0_1px_0_rgba(255,255,255,.6),0_10px_30px_-12px_rgba(2,6,23,.25)] backdrop-blur-xl">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-900 text-white">
-              <Beaker size={18} />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Product Mixtures</h1>
-              <p className="text-sm text-slate-500">Create mixtures (mixIn → mixOut) and automatically update stock.</p>
-            </div>
+      <div className="rounded-2xl border bg-white p-5 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-900 text-white">
+            <Beaker size={18} />
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setOpen(true); setErr(""); setOk(""); setFormErrors({ inventory: "", inputs: [], outputs: [], general: "" }); }}
-              className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:shadow-md"
-            >
-              <Plus size={16}/> New Mixture
-            </button>
-            <button
-              onClick={() => { fetchMixtures(); fetchReferences(); }}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
-            >
-              <RefreshCw size={16}/> Refresh
-            </button>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">Product Mixtures</h1>
+            <p className="text-sm text-slate-500">Create mixIn → mixOut entries and update inventory stock.</p>
           </div>
         </div>
 
-        {err && <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
-        {ok  && <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setOpen(true);
+              setErr("");
+              setOk("");
+              setFormErrors({ inventory: "", inputs: [], outputs: [], general: "" });
+            }}
+            className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+          >
+            <Plus size={16} /> New Mixture
+          </button>
+
+          <button onClick={() => { fetchMixtures(); fetchReferences(); }} className="inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm">
+            <RefreshCw size={16} /> Refresh
+          </button>
+        </div>
       </div>
 
-      {/* List */}
+      {err && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{err}</div>}
+      {ok && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">{ok}</div>}
+
+      {/* mixtures list */}
       {loading ? (
         <div className="text-sm text-slate-500">Loading mixtures…</div>
       ) : mixtures.length === 0 ? (
-        <div className="rounded-2xl border border-white/60 bg-white/70 p-10 text-center text-slate-500">No mixtures found.</div>
+        <div className="rounded-2xl border bg-white p-10 text-center text-slate-500">No mixtures found.</div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {mixtures.map((m) => {
-            const inputs = (m.productMixtures || []).filter(p => p.status === "mixIn");
-            const outputs = (m.productMixtures || []).filter(p => p.status === "mixOut");
+            const inputs = (m.productMixtures || []).filter((p) => p.status === "mixIn");
+            const outputs = (m.productMixtures || []).filter((p) => p.status === "mixOut");
             return (
-              <div key={m.id} className="rounded-2xl border border-white/60 bg-white/80 p-4 shadow-sm">
+              <div key={m.id} className="rounded-2xl border bg-white p-4 shadow-sm">
                 <div className="flex justify-between items-start">
                   <div>
-                    <div className="text-sm font-semibold text-slate-800">{ inventoryMap[m.inventoryId]?.inventoryName || m.inventory?.inventoryName || "—" }</div>
-                    <div className="text-xs text-slate-500">{ new Date(m.createdAt).toLocaleString() }</div>
+                    <div className="text-sm font-semibold text-slate-800">{inventoryMap[m.inventoryId]?.inventoryName || m.inventory?.inventoryName || `#${m.inventoryId}`}</div>
+                    <div className="text-xs text-slate-500">{fmtPrettyDate(m.createdAt)}</div>
                   </div>
                   <button onClick={() => handleDelete(m.id)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-50">
-                    <Trash2 size={16}/>
+                    <Trash2 size={16} />
                   </button>
                 </div>
 
-                <div className="mt-3 text-sm text-slate-700 space-y-2">
+                <div className="mt-3 text-sm text-slate-700 space-y-3">
                   <div>
-                    <div className="text-xs text-slate-500">Inputs (mixIn)</div>
-                    <div className="mt-1">{ inputs.length ? inputs.map(p => (
-                      <div key={p.id || `${p.productId}-${p.unitId}`} className="text-sm">
-                        • { (p.product?.productName || productMap[p.productId]?.productName) || `#${p.productId}` } — {p.qty} { (p.unit?.unitName || unitMap[p.unitId]?.unitName) || "" }
-                      </div>
-                    )) : <div className="text-xs text-slate-400">—</div> }</div>
+                    <div className="text-xs text-slate-500 font-medium">Inputs (mixIn)</div>
+                    <div className="mt-2 space-y-1">
+                      {inputs.length ? inputs.map((p) => (
+                        <div key={p.id || `${p.productId}-${p.unitId}`} className="text-sm flex items-center justify-between">
+                          <div className="truncate">• {productMap[p.productId]?.productName || `#${p.productId}`}</div>
+                          <div className="text-xs text-slate-500 ml-4">{p.qty} {unitMap[p.unitId]?.unitName || ""}</div>
+                        </div>
+                      )) : <div className="text-xs text-slate-400">—</div>}
+                    </div>
                   </div>
 
                   <div>
-                    <div className="text-xs text-slate-500">Outputs (mixOut)</div>
-                    <div className="mt-1">{ outputs.length ? outputs.map(p => (
-                      <div key={p.id || `${p.productId}-${p.unitId}`} className="text-sm">
-                        • { (p.product?.productName || productMap[p.productId]?.productName) || `#${p.productId}` } +{p.qty} { (p.unit?.unitName || unitMap[p.unitId]?.unitName) || "" }
-                      </div>
-                    )) : <div className="text-xs text-slate-400">—</div> }</div>
+                    <div className="text-xs text-slate-500 font-medium">Outputs (mixOut)</div>
+                    <div className="mt-2 space-y-1">
+                      {outputs.length ? outputs.map((p) => (
+                        <div key={p.id || `${p.productId}-${p.unitId}`} className="text-sm flex items-center justify-between">
+                          <div className="truncate">• {productMap[p.productId]?.productName || `#${p.productId}`}</div>
+                          <div className="text-xs text-slate-500 ml-4">+{p.qty} {unitMap[p.unitId]?.unitName || ""}</div>
+                        </div>
+                      )) : <div className="text-xs text-slate-400">—</div>}
+                    </div>
                   </div>
 
                   {m.notes && <div className="mt-2 text-xs text-slate-500">Note: {m.notes}</div>}
@@ -370,50 +417,39 @@ export default function MixturePage() {
         </div>
       )}
 
-      {/* CREATE MODAL */}
+      {/* create modal */}
       {open && (
-        <div className="fixed inset-0 z-50 grid place-items-center">
-          <div className="absolute inset-0 bg-slate-900/45" onClick={() => setOpen(false)} />
-          <div className="relative w-[min(980px,96vw)] bg-white rounded-2xl p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 grid place-items-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
+          <div className="relative w-[min(980px,96vw)] bg-white rounded-2xl p-6 shadow-lg">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold">Create Mixture</h2>
-              <button onClick={() => setOpen(false)} className="rounded-lg p-2 hover:bg-slate-50">Close</button>
+              <button onClick={() => setOpen(false)} className="rounded p-2 hover:bg-slate-100"><X size={18} /></button>
             </div>
 
             <form onSubmit={handleCreate} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm text-slate-600">Inventory *</label>
-                  <select
-                    required
+                  <SearchableSelect
                     value={form.inventoryId}
-                    onChange={(e) => { setForm(f => ({ ...f, inventoryId: e.target.value })); setFormErrors(prev => ({ ...prev, inventory: "" })); }}
-                    className={`mt-1 w-full rounded-2xl border px-3 py-2 outline-none ${formErrors.inventory ? "border-rose-500" : "border-slate-300"}`}
-                  >
-                    <option value="">Select inventory…</option>
-                    {inventories.map(inv => <option key={inv.id} value={inv.id}>{inv.inventoryName || inv.name || `#${inv.id}`}</option>)}
-                  </select>
+                    onChange={(v) => { setField("inventoryId", v); setFormErrors((p) => ({ ...p, inventory: "" })); }}
+                    options={[{ value: "", label: "Select inventory…" }, ...inventories.map((i) => ({ value: i.id, label: i.inventoryName || i.name || `#${i.id}` }))]}
+                  />
                   {formErrors.inventory && <div className="mt-1 text-xs text-rose-600">{formErrors.inventory}</div>}
                 </div>
 
                 <div>
                   <label className="text-sm text-slate-600">Notes</label>
-                  <input
-                    value={form.notes}
-                    onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
-                    placeholder="Optional notes"
-                    className="mt-1 w-full rounded-2xl border border-slate-300 px-3 py-2 outline-none"
-                  />
+                  <input value={form.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="Optional notes" className="mt-1 w-full rounded-xl border px-3 py-2" />
                 </div>
               </div>
 
-              {/* general form-level error */}
               {formErrors.general && <div className="text-sm text-rose-600">{formErrors.general}</div>}
 
-              {/* inputs / outputs sections side-by-side */}
               <div className="grid grid-cols-2 gap-4">
                 {/* Inputs */}
-                <div className="rounded-xl border border-slate-200 p-3">
+                <div className="rounded-xl border p-3">
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-sm font-medium">Inputs (mixIn)</div>
                     <button type="button" onClick={addInput} className="text-sm rounded-full px-2 py-1 border">+ Add</button>
@@ -422,39 +458,35 @@ export default function MixturePage() {
                   <div className="space-y-2">
                     {form.inputs.map((it, idx) => (
                       <div key={idx}>
-                        <div className="grid grid-cols-[1fr_1fr_72px_32px] gap-2 items-center">
-                          <select required value={it.productId} onChange={(e) => updateInput(idx, "productId", e.target.value)} className={`rounded-2xl border px-2 py-1 ${formErrors.inputs[idx] ? "border-rose-500" : "border-slate-300"}`}>
-                            <option value="">Product…</option>
-                            {products.map(p => <option key={p.id} value={p.id}>{p.productName}</option>)}
-                          </select>
-
-                          <select required value={it.unitId} onChange={(e) => updateInput(idx, "unitId", e.target.value)} className={`rounded-2xl border px-2 py-1 ${formErrors.inputs[idx] ? "border-rose-500" : "border-slate-300"}`}>
-                            <option value="">Unit…</option>
-                            {units.map(u => <option key={u.id} value={u.id}>{u.unitName || u.name}</option>)}
-                          </select>
-
-                          <input required type="number" min="0" step="0.01" placeholder="Qty" value={it.qty} onChange={(e) => updateInput(idx, "qty", e.target.value)} className={`rounded-2xl border px-2 py-1 ${formErrors.inputs[idx] ? "border-rose-500" : "border-slate-300"}`} />
-
-                          <button type="button" onClick={() => removeInput(idx)} className="p-2 text-rose-600"><Trash2 size={14}/></button>
+                        <div className="grid grid-cols-[1fr_1fr_80px_36px] gap-2 items-center">
+                          <SearchableSelect
+                            value={it.productId}
+                            onChange={(v) => updateInput(idx, "productId", v)}
+                            options={[{ value: "", label: "Product…" }, ...products.map((p) => ({ value: p.id, label: p.productName || p.name || `#${p.id}` }))]}
+                          />
+                          <SearchableSelect
+                            value={it.unitId}
+                            onChange={(v) => updateInput(idx, "unitId", v)}
+                            options={[{ value: "", label: "Unit…" }, ...units.map((u) => ({ value: u.id, label: u.unitName || u.name || `#${u.id}` }))]}
+                          />
+                          <input value={it.qty} onChange={(e) => updateInput(idx, "qty", e.target.value)} required type="number" step="0.01" placeholder="Qty" className={`rounded-xl border px-2 py-2 ${formErrors.inputs[idx] ? "border-rose-500" : "border-slate-300"}`} />
+                          <button type="button" onClick={() => removeInput(idx)} className="p-2 text-rose-600"><Trash2 size={14} /></button>
                         </div>
                         {formErrors.inputs[idx] && <div className="mt-1 text-xs text-rose-600">{formErrors.inputs[idx]}</div>}
                       </div>
                     ))}
                   </div>
 
-                  {/* preview */}
                   <div className="mt-3 text-xs text-slate-500">
                     <div className="font-medium text-slate-700 mb-1">Preview</div>
-                    {previewInputs.length === 0 ? <div className="text-xs text-slate-400">No valid inputs yet</div> :
-                      previewInputs.map((p, i) => (
-                        <div key={i} className="text-sm">• {productMap[p.productId]?.productName || `#${p.productId}`} — {p.qty} {unitMap[p.unitId]?.unitName || ""}</div>
-                      ))
-                    }
+                    {previewInputs.length === 0 ? <div className="text-xs text-slate-400">No valid inputs yet</div> : previewInputs.map((p, i) => (
+                      <div key={i} className="text-sm">• {productMap[p.productId]?.productName || `#${p.productId}`} — {p.qty} {unitMap[p.unitId]?.unitName || ""}</div>
+                    ))}
                   </div>
                 </div>
 
                 {/* Outputs */}
-                <div className="rounded-xl border border-slate-200 p-3">
+                <div className="rounded-xl border p-3">
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-sm font-medium">Outputs (mixOut)</div>
                     <button type="button" onClick={addOutput} className="text-sm rounded-full px-2 py-1 border">+ Add</button>
@@ -463,41 +495,37 @@ export default function MixturePage() {
                   <div className="space-y-2">
                     {form.outputs.map((it, idx) => (
                       <div key={idx}>
-                        <div className="grid grid-cols-[1fr_1fr_72px_32px] gap-2 items-center">
-                          <select required value={it.productId} onChange={(e) => updateOutput(idx, "productId", e.target.value)} className={`rounded-2xl border px-2 py-1 ${formErrors.outputs[idx] ? "border-rose-500" : "border-slate-300"}`}>
-                            <option value="">Product…</option>
-                            {products.map(p => <option key={p.id} value={p.id}>{p.productName}</option>)}
-                          </select>
-
-                          <select required value={it.unitId} onChange={(e) => updateOutput(idx, "unitId", e.target.value)} className={`rounded-2xl border px-2 py-1 ${formErrors.outputs[idx] ? "border-rose-500" : "border-slate-300"}`}>
-                            <option value="">Unit…</option>
-                            {units.map(u => <option key={u.id} value={u.id}>{u.unitName || u.name}</option>)}
-                          </select>
-
-                          <input required type="number" min="0" step="0.01" placeholder="Qty" value={it.qty} onChange={(e) => updateOutput(idx, "qty", e.target.value)} className={`rounded-2xl border px-2 py-1 ${formErrors.outputs[idx] ? "border-rose-500" : "border-slate-300"}`} />
-
-                          <button type="button" onClick={() => removeOutput(idx)} className="p-2 text-rose-600"><Trash2 size={14}/></button>
+                        <div className="grid grid-cols-[1fr_1fr_80px_36px] gap-2 items-center">
+                          <SearchableSelect
+                            value={it.productId}
+                            onChange={(v) => updateOutput(idx, "productId", v)}
+                            options={[{ value: "", label: "Product…" }, ...products.map((p) => ({ value: p.id, label: p.productName || p.name || `#${p.id}` }))]}
+                          />
+                          <SearchableSelect
+                            value={it.unitId}
+                            onChange={(v) => updateOutput(idx, "unitId", v)}
+                            options={[{ value: "", label: "Unit…" }, ...units.map((u) => ({ value: u.id, label: u.unitName || u.name || `#${u.id}` }))]}
+                          />
+                          <input value={it.qty} onChange={(e) => updateOutput(idx, "qty", e.target.value)} required type="number" step="0.01" placeholder="Qty" className={`rounded-xl border px-2 py-2 ${formErrors.outputs[idx] ? "border-rose-500" : "border-slate-300"}`} />
+                          <button type="button" onClick={() => removeOutput(idx)} className="p-2 text-rose-600"><Trash2 size={14} /></button>
                         </div>
                         {formErrors.outputs[idx] && <div className="mt-1 text-xs text-rose-600">{formErrors.outputs[idx]}</div>}
                       </div>
                     ))}
                   </div>
 
-                  {/* preview */}
                   <div className="mt-3 text-xs text-slate-500">
                     <div className="font-medium text-slate-700 mb-1">Preview</div>
-                    {previewOutputs.length === 0 ? <div className="text-xs text-slate-400">No valid outputs yet</div> :
-                      previewOutputs.map((p, i) => (
-                        <div key={i} className="text-sm">• {productMap[p.productId]?.productName || `#${p.productId}`} +{p.qty} {unitMap[p.unitId]?.unitName || ""}</div>
-                      ))
-                    }
+                    {previewOutputs.length === 0 ? <div className="text-xs text-slate-400">No valid outputs yet</div> : previewOutputs.map((p, i) => (
+                      <div key={i} className="text-sm">• {productMap[p.productId]?.productName || `#${p.productId}`} +{p.qty} {unitMap[p.unitId]?.unitName || ""}</div>
+                    ))}
                   </div>
                 </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-4">
-                <button type="button" onClick={() => setOpen(false)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700">Cancel</button>
-                <button type="submit" disabled={creating} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">
+                <button type="button" onClick={() => setOpen(false)} className="rounded-xl border px-4 py-2 text-sm">Cancel</button>
+                <button type="submit" disabled={creating} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
                   {creating ? "Creating…" : "Create Mixture"}
                 </button>
               </div>
